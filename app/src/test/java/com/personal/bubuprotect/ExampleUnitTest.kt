@@ -1,4 +1,4 @@
-package com.example.bubuprotect
+package com.personal.bubuprotect
 
 import org.junit.Test
 

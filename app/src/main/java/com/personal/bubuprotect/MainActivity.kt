@@ -1,4 +1,4 @@
-package com.example.bubuprotect
+package com.personal.bubuprotect
 
 import android.os.Bundle
 import android.util.Log
@@ -8,9 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
-import com.example.bubuprotect.services.BiometricHelper
-import com.example.bubuprotect.ui.screens.MainScreen
-import com.example.bubuprotect.ui.screens.WelcomeScreen
+import com.personal.bubuprotect.services.BiometricHelper
+import com.personal.bubuprotect.ui.screens.MainScreen
+import com.personal.bubuprotect.ui.screens.WelcomeScreen
 
 class MainActivity : AppCompatActivity() {
     private lateinit var biometricHelper: BiometricHelper

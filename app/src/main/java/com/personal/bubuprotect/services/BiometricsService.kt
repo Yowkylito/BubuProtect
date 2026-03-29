@@ -1,4 +1,4 @@
-package com.example.bubuprotect.services
+package com.personal.bubuprotect.services
 
 import android.content.Context
 import android.content.Intent

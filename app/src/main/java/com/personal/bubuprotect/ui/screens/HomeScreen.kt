@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui.screens
+package com.personal.bubuprotect.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -45,18 +45,19 @@ import androidx.compose.ui.text.font.FontWeight.Companion.SemiBold
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
-import com.example.bubuprotect.R
-import com.example.bubuprotect.ui.components.Font01
-import com.example.bubuprotect.ui.components.Font02
-import com.example.bubuprotect.ui.components.Primary01
-import com.example.bubuprotect.ui.components.Primary02
-import com.example.bubuprotect.ui.components.createImageLoader
+import com.personal.bubuprotect.R
+import com.personal.bubuprotect.ui.components.Font01
+import com.personal.bubuprotect.ui.components.Font02
+import com.personal.bubuprotect.ui.components.Primary01
+import com.personal.bubuprotect.ui.components.Primary02
+import com.personal.bubuprotect.ui.components.createImageLoader
 
 @Composable
 fun HomeScreen(
     isPasswordVisible: Boolean,
     onVisibilityChange: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
     val imageLoader = remember { createImageLoader(context) }
     Box(
@@ -134,7 +135,7 @@ fun HomeScreen(
                             .height(250.dp)
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                             .clickable(
-                                interactionSource = MutableInteractionSource(),
+                                interactionSource = interactionSource,
                                 onClick = { flipped = !flipped }
                             )
 

@@ -1,4 +1,4 @@
-package com.example.bubuprotect
+package com.personal.bubuprotect
 
 import android.app.Application
 import org.koin.android.ext.koin.androidContext

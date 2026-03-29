@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui.components
+package com.personal.bubuprotect.ui.components
 
 import android.content.Context
 import android.os.Build.VERSION.SDK_INT

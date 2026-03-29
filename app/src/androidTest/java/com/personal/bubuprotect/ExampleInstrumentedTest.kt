@@ -1,4 +1,4 @@
-package com.example.bubuprotect
+package com.personal.bubuprotect
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4

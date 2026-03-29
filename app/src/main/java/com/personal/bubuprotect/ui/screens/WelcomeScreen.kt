@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui.screens
+package com.personal.bubuprotect.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -30,12 +30,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
-import com.example.bubuprotect.R
-import com.example.bubuprotect.ui.components.Font01
-import com.example.bubuprotect.ui.components.Primary01
+import com.personal.bubuprotect.R
+import com.personal.bubuprotect.ui.components.Font01
+import com.personal.bubuprotect.ui.components.Primary01
 
-import com.example.bubuprotect.ui.components.Primary02
-import com.example.bubuprotect.ui.components.createImageLoader
+import com.personal.bubuprotect.ui.components.Primary02
+import com.personal.bubuprotect.ui.components.createImageLoader
 
 
 @Preview()

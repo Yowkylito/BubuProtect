@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui.theme
+package com.personal.bubuprotect.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

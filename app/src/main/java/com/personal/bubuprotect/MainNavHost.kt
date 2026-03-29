@@ -1,4 +1,4 @@
-package com.example.bubuprotect
+package com.personal.bubuprotect
 
 import android.util.Log
 import androidx.compose.runtime.Composable
@@ -12,9 +12,9 @@ import androidx.fragment.app.FragmentActivity
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.example.bubuprotect.services.BiometricHelper
-import com.example.bubuprotect.ui.Routes
-import com.example.bubuprotect.ui.screens.HomeScreen
+import com.personal.bubuprotect.services.BiometricHelper
+import com.personal.bubuprotect.ui.Routes
+import com.personal.bubuprotect.ui.screens.HomeScreen
 
 @Composable
 fun MainNavHost(

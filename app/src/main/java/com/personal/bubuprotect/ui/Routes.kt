@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui
+package com.personal.bubuprotect.ui
 
 import kotlinx.serialization.Serializable
 

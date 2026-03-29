@@ -1,4 +1,4 @@
-package com.example.bubuprotect.ui.screens
+package com.personal.bubuprotect.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import com.example.bubuprotect.MainNavHost
-import com.example.bubuprotect.services.BiometricHelper
-import com.example.bubuprotect.ui.components.Primary01
+import com.personal.bubuprotect.MainNavHost
+import com.personal.bubuprotect.services.BiometricHelper
+import com.personal.bubuprotect.ui.components.Primary01
 
 
 @Composable
