@@ -7,5 +7,7 @@ import kotlinx.serialization.Serializable
 sealed class Routes() {
     @Serializable
     object HomeRoute : Routes()
-
+    
+    @Serializable
+    object FaceRecognitionRoute : Routes()
 }

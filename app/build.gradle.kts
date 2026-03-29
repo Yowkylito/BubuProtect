@@ -1,17 +1,20 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
 
-
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
 android {
     namespace = "com.personal.bubuprotect"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.personal.bubuprotect"
@@ -21,6 +24,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Add BuildConfigs
+        val luxandApiKey = localProperties.getProperty("LUXAND_API_KEY") ?: ""
+        val galleryId = localProperties.getProperty("GALLERY_ID") ?: ""
+        buildConfigField("String", "LUXAND_API_KEY", "\"$luxandApiKey\"")
+        buildConfigField("String", "GALLERY_ID", "\"$galleryId\"")
     }
 
     buildTypes {
@@ -36,12 +45,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlin {
-        jvmToolchain(17)
-    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
@@ -64,7 +76,31 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.androidx.biometric)
     implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
     // Coil
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
-   }
+
+    // ML Kit Face Detection
+    implementation(libs.mlkit.face.detection)
+
+    // TensorFlow Lite
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.support)
+
+    // CameraX
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Guava (needed for ListenableFuture in CameraX)
+    implementation(libs.guava)
+
+    // Ktor
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.android)
+    implementation(libs.ktor.client.logging)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+}

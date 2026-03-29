@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -26,17 +25,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.personal.bubuprotect.R
 import com.personal.bubuprotect.ui.components.Font01
 import com.personal.bubuprotect.ui.components.Primary01
-
 import com.personal.bubuprotect.ui.components.Primary02
 import com.personal.bubuprotect.ui.components.createImageLoader
-
 
 
 @Composable
@@ -78,19 +74,19 @@ fun WelcomeScreen(
                     .clip(CircleShape)
                     .clickable { onSignIn() }
                     .border(BorderStroke(2.dp, Primary02), shape = CircleShape)
-                    .size(300.dp)
-                    .padding(horizontal = 4.dp)
+                    .size(250.dp)
+
 
             )
         }
         Spacer(Modifier.height(20.dp))
         Text(
-            text="Prove that you are my Bubu!",
-            color= Font01,
+            text = "Prove that you are my Bubu!",
+            color = Font01,
             style = TextStyle(
-                fontSize=24.sp,
-                lineHeight=24.sp,
-                letterSpacing=0.5.sp
+                fontSize = 24.sp,
+                lineHeight = 24.sp,
+                letterSpacing = 0.5.sp
             )
         )
 
