@@ -38,7 +38,7 @@ import com.personal.bubuprotect.ui.components.Primary02
 import com.personal.bubuprotect.ui.components.createImageLoader
 
 
-@Preview()
+
 @Composable
 fun WelcomeScreen(
     modifier: Modifier = Modifier,
@@ -76,10 +76,11 @@ fun WelcomeScreen(
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier
                     .clip(CircleShape)
+                    .clickable { onSignIn() }
                     .border(BorderStroke(2.dp, Primary02), shape = CircleShape)
                     .size(300.dp)
                     .padding(horizontal = 4.dp)
-                    .clickable { onSignIn() }
+
             )
         }
         Spacer(Modifier.height(20.dp))

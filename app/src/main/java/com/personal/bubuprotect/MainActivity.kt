@@ -1,5 +1,6 @@
 package com.personal.bubuprotect
 
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.setContent
@@ -17,6 +18,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        //Prevent Overlays (Anti-Tapjacking)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            window.setHideOverlayWindows(true)
+        }
+
         biometricHelper = BiometricHelper(this)
 
         if (biometricHelper.canAuthenticate()) {

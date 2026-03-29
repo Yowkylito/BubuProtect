@@ -1,7 +1,14 @@
 package com.personal.bubuprotect.ui.screens
 
+import android.app.Activity
+import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight.Companion.SemiBold
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
@@ -50,33 +59,42 @@ import com.personal.bubuprotect.ui.components.Font01
 import com.personal.bubuprotect.ui.components.Font02
 import com.personal.bubuprotect.ui.components.Primary01
 import com.personal.bubuprotect.ui.components.Primary02
+import com.personal.bubuprotect.ui.components.colorBubu
 import com.personal.bubuprotect.ui.components.createImageLoader
 
+@Preview
 @Composable
 fun HomeScreen(
-    isPasswordVisible: Boolean,
-    onVisibilityChange: () -> Unit
+    isPasswordVisible: Boolean = true,
+    onVisibilityChange: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
     val imageLoader = remember { createImageLoader(context) }
+    // Toggle FLAG_SECURE for this screen only
+    DisposableEffect(isPasswordVisible) {
+        val window = (context as? Activity)?.window
+        if(isPasswordVisible){
+            window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
     Box(
         modifier = Modifier
-            .height(300.dp)
-            .fillMaxWidth(),
-        contentAlignment = Alignment.Center
+            .fillMaxSize() // Changed from height(300.dp) to allow content to fit
+            .background(Primary01),
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Primary01)
+            modifier = Modifier.fillMaxSize()
         ) {
             //HomeScreen Header
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(90.dp)
-                    .background(Primary01)
                     .padding(8.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -115,7 +133,14 @@ fun HomeScreen(
 
                 }
             }
-            if (isPasswordVisible) {
+
+            // Move isPasswordVisible logic into AnimatedVisibility to allow exit animations
+            AnimatedVisibility(
+                visible = isPasswordVisible,
+                enter = expandVertically(animationSpec = tween(800)) + fadeIn(),
+                exit = shrinkOut(animationSpec = tween(800)) + fadeOut(),
+            )
+            {
                 var flipped by remember { mutableStateOf(false) }
 
                 // Animate rotation between 0f and 180f
@@ -125,9 +150,8 @@ fun HomeScreen(
                     label = "rotation"
                 )
 
-                Column(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxWidth()) {
                     val cardShape: Shape = RoundedCornerShape(16.dp)
-
                     Card(
                         modifier = Modifier
                             .clip(cardShape)
@@ -136,9 +160,9 @@ fun HomeScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                             .clickable(
                                 interactionSource = interactionSource,
+                                indication = null, // Optional: remove ripple to keep flip clean
                                 onClick = { flipped = !flipped }
                             )
-
                             .graphicsLayer {
                                 rotationY = rotation
                                 cameraDistance = 12f * density
@@ -148,16 +172,17 @@ fun HomeScreen(
                             pressedElevation = 20.dp
                         ),
                         colors = CardDefaults.cardColors(
-                            containerColor = Primary01
+                            containerColor = colorBubu
                         ),
-
-                        ) {
+                    )
+                    {
                         Box(
                             Modifier
                                 .fillMaxSize()
-                                .background(Primary01),
+                                .background(colorBubu),
                             contentAlignment = Alignment.Center
-                        ) {
+                        )
+                        {
                             if (rotation <= 90f) {
                                 Image(
                                     painter = rememberAsyncImagePainter(
@@ -167,15 +192,13 @@ fun HomeScreen(
                                     contentDescription = "Welcome Image",
                                     contentScale = ContentScale.FillBounds,
                                     modifier = Modifier
-                                        .clip(CircleShape)
-                                        .border(BorderStroke(2.dp, Primary02), shape = CircleShape)
                                         .size(150.dp)
 
                                 )
                             } else {
-
                                 Text(
                                     "Sensitive Side",
+                                    color = Font01,
                                     modifier = Modifier.graphicsLayer {
                                         rotationY = 180f
                                     }
@@ -183,13 +206,14 @@ fun HomeScreen(
                             }
                         }
                     }
-                    LazyColumn() {
 
-
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        // Items will go here
                     }
                 }
             }
         }
+
         Image(
             painter = rememberAsyncImagePainter(R.drawable.welcome, imageLoader),
             contentDescription = "Welcome Image",

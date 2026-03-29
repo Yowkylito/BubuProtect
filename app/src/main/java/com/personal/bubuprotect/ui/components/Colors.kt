@@ -20,3 +20,5 @@ val Font01 = Color(0xFF4B4237)
 // A softer, muted brown for secondary text or icons. It's less demanding
 // than Font01 but still very readable on your light background.
 val Font02 = Color(0xFF8B8175)
+
+val colorBubu = Color(0xFFCB9B85)
