@@ -13,3 +13,12 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# --- Release signing ------------------------------------------------------------------------
+# Never commit either half of the signing identity. The keystore is the app's identity: leak it
+# and someone else can ship an update that Android accepts as genuine; lose it and you can never
+# update the app again under this package name.
+keystore.properties
+*.jks
+*.keystore
+/app/release/

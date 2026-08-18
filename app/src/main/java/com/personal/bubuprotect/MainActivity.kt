@@ -1,109 +1,106 @@
 package com.personal.bubuprotect
 
-import android.os.Build
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.fragment.app.FragmentActivity
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import com.personal.bubuprotect.services.BiometricHelper
-import com.personal.bubuprotect.ui.Routes
-import com.personal.bubuprotect.ui.screens.FaceRecognitionScreen
-import com.personal.bubuprotect.ui.screens.MainScreen
-import com.personal.bubuprotect.ui.screens.WelcomeScreen
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import coil.ImageLoader
+import com.personal.bubuprotect.core.security.SecureWindow
+import com.personal.bubuprotect.session.VaultSession
+import com.personal.bubuprotect.ui.BubuApp
+import com.personal.bubuprotect.ui.components.LocalBubuImageLoader
+import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import org.koin.android.ext.android.inject
 
+/**
+ * The only activity.
+ *
+ * `AppCompatActivity` (and so `FragmentActivity`) because `BiometricPrompt` attaches itself as a
+ * fragment - that is also what lets the prompt survive a rotation mid-authentication. Swapping the
+ * base class for `ComponentActivity` would break every authentication in the app at runtime rather
+ * than at compile time.
+ */
 class MainActivity : AppCompatActivity() {
-    private lateinit var biometricHelper: BiometricHelper
+
+    private val session: VaultSession by inject()
+    private val imageLoader: ImageLoader by inject()
+
+    /**
+     * Screen off is the device-theft signal: no grace period, lock immediately.
+     *
+     * `ACTION_SCREEN_OFF` cannot be declared in the manifest - the system only delivers it to
+     * runtime-registered receivers - so it is bound to the activity's whole lifetime rather than to
+     * `onStart`/`onStop`. Registering it in `onStart` would be too late: turning the screen off
+     * *causes* `onStop`, and the two would race.
+     */
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) session.onScreenOff()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        //Prevent Overlays (Anti-Tapjacking)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            window.setHideOverlayWindows(true)
-        }
+        // Before any content exists, so there is no frame that could be captured unprotected.
+        SecureWindow.harden(this)
+        enableEdgeToEdge()
 
-        biometricHelper = BiometricHelper(this)
+        ContextCompat.registerReceiver(
+            this,
+            screenOffReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        lifecycle.addObserver(AutoLock(session))
 
         setContent {
-            val navController = rememberNavController()
-            val context = LocalContext.current
-            val activity = context as FragmentActivity
-
-            // Use NavHost to handle navigation between Welcome and Face Recognition
-            NavHost(navController = navController, startDestination = "welcome") {
-                composable("welcome") { backStackEntry ->
-                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                        WelcomeScreen(modifier = Modifier.padding(innerPadding)) {
-                            navController.navigate(Routes.FaceRecognitionRoute)
-                        }
-                        // Use the backStackEntry provided by the composable scope
-                        val recognitionSuccess =
-                            backStackEntry.savedStateHandle.get<Boolean>("success") ?: false
-
-                        LaunchedEffect(recognitionSuccess) {
-                            if (recognitionSuccess) {
-                                backStackEntry.savedStateHandle.remove<Boolean>("success")
-                                if (biometricHelper.canAuthenticate()) {
-                                    val promptInfo = biometricHelper.buildPromptInfo(
-                                        title = "Second Factor Authentication",
-                                        subtitle = "Authenticate using your fingerprint"
-                                    )
-
-                                    val biometricPrompt = biometricHelper.createBiometricPrompt(
-                                        activity = activity,
-                                        onSuccess = {
-                                            setContent {
-                                                val mainNavController = rememberNavController()
-                                                MainScreen(mainNavController, biometricHelper)
-                                            }
-                                        },
-                                        onError = { code, msg ->
-                                            Log.e("BIOMETRICS", "Error: $msg")
-                                        },
-                                        onFailed = {
-                                            Log.e("BIOMETRICS", "Authentication failed")
-                                        }
-                                    )
-                                    biometricPrompt.authenticate(promptInfo)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Add the FaceRecognitionRoute to this NavHost as well
-                composable<Routes.FaceRecognitionRoute> {
-                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                        // Assuming you have FaceRecognitionScreen available
-                        FaceRecognitionScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            onFaceRecognized = {
-                                navController.previousBackStackEntry?.savedStateHandle?.set(
-                                    "success",
-                                    true
-                                )
-                                navController.popBackStack()
-                            },
-                            onBack = {
-                                navController.popBackStack()
-                            }
-                        )
+            BubuProtectTheme {
+                CompositionLocalProvider(LocalBubuImageLoader provides imageLoader) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        BubuApp()
                     }
                 }
             }
         }
-
-
     }
 
+    override fun onDestroy() {
+        unregisterReceiver(screenOffReceiver)
+        super.onDestroy()
+    }
+}
+
+/**
+ * The background timeout.
+ *
+ * `onStop`/`onStart` rather than `onPause`/`onResume`: a biometric prompt pauses the activity, and
+ * locking the vault the instant the fingerprint dialog appeared would make unlocking impossible.
+ *
+ * The grace period itself lives in [VaultSession], measured against the monotonic clock - see
+ * [VaultSession.onReturnedToForeground] for why it is a minute rather than zero.
+ */
+private class AutoLock(private val session: VaultSession) : DefaultLifecycleObserver {
+
+    override fun onStop(owner: LifecycleOwner) = session.onMovedToBackground()
+
+    override fun onStart(owner: LifecycleOwner) {
+        session.onReturnedToForeground()
+    }
 }
