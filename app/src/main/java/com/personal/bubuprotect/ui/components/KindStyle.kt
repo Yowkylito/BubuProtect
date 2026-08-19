@@ -2,9 +2,9 @@ package com.personal.bubuprotect.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.personal.bubuprotect.R
 import com.personal.bubuprotect.domain.model.ItemKind
 import com.personal.bubuprotect.ui.theme.AccentPair
+import com.personal.bubuprotect.ui.theme.SquircleShape
 import com.personal.bubuprotect.ui.theme.bubu
 
 /**
@@ -67,7 +68,12 @@ fun KindBadge(
     Box(
         modifier = modifier
             .size(size)
-            .background(accent.container, CircleShape),
+            .background(accent.container, SquircleShape)
+            .border(
+                width = 1.dp,
+                color = accent.content.copy(alpha = 0.18f),
+                shape = SquircleShape
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(

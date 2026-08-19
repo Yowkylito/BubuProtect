@@ -1,11 +1,11 @@
 package com.personal.bubuprotect.core.crypto
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
-import android.util.Log
 import com.personal.bubuprotect.data.local.VaultKeyStore
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
+import timber.log.Timber
 
 /** The unlocked key set for one session. Closing it wipes every byte it owns. */
 class VaultKeys(
@@ -170,7 +170,7 @@ class VaultKeyManager(
     private fun discardBiometricWrapper() {
         keyStore.clearBiometricWrapper()
         kek.delete()
-        Log.i(TAG, "Biometric wrapper discarded; passphrase unlock remains available")
+        Timber.tag(TAG).i("Biometric wrapper discarded; passphrase unlock remains available")
     }
 
     private companion object {

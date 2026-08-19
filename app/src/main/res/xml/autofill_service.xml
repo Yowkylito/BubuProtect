@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Autofill service configuration.
+
+    `settingsActivity` gives the system's autofill settings a way into this app, which is where the
+    user goes to turn the service off again.
+
+    Note what is deliberately absent: no `<compatibility-package>` list. Compatibility mode drives
+    autofill through the accessibility pipeline for apps that never adopted the framework, and it
+    works by having the platform read the target's virtual view tree continuously. That is a great
+    deal more of other apps' content flowing through this process than filling a field requires, and
+    it is the sort of capability the app's own device check warns the user about. Apps that do not
+    support autofill simply will not be offered it.
+-->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.personal.bubuprotect.MainActivity" />

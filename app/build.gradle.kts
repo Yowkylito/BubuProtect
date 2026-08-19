@@ -77,7 +77,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // The vault is offline-only: no API keys, no BuildConfig secrets, no network.
+        // The only network call is the keyless, k-anonymous Pwned Passwords range lookup.
+        // No API keys or BuildConfig secrets are needed or embedded.
         ndk {
             // SQLCipher ships native code. Keep only the ABIs real devices use.
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -117,10 +118,16 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
             // findByName, not getByName: it returns null when no keystore was configured, which
             // yields an unsigned APK rather than a build failure - see the note on
             // keystoreProperties. getByName would throw during configuration instead.
+            //
+            // It must never fall back to signingConfigs["debug"]. That keystore ships on every
+            // machine with the password "android" and alias AndroidDebugKey, so a debug-signed
+            // release is forgeable by anyone, Play rejects it outright, and switching to the real
+            // key later breaks updates for whoever installed it - they must uninstall, taking their
+            // vault with them.
         }
         debug {
             // Keeps debug and release vaults from fighting over the same DB file.
@@ -172,6 +179,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
+    implementation(libs.timber)
 
     // Coil (local GIF assets only)
     implementation(libs.coil.compose)
@@ -182,4 +190,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.sqlcipher.android)
+
+    // Argon2id, for the exported-backup KDF only. The pure-Java implementation is used directly as
+    // a class rather than registered as a JCE provider, so it cannot shadow the platform's own
+    // crypto - and unlike a JNI build it runs in JVM unit tests, so the KDF is actually covered.
+    implementation(libs.bouncycastle)
 }

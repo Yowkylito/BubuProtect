@@ -138,3 +138,26 @@ val ItemKind.fields: List<FieldSpec>
 /** The one field a generated password makes sense for. Drives whether the dice button appears. */
 val ItemKind.supportsGeneratedSecret: Boolean
     get() = this == ItemKind.LOGIN || this == ItemKind.WIFI
+
+/**
+ * Whether a contactless tap can fill part of this kind's form.
+ *
+ * Only cards, and only two of a card's fields: the chip carries the number and the expiry, and
+ * carries neither the CVV printed on the back nor the PIN. See
+ * [com.personal.bubuprotect.domain.model.ScannedCard] for why that is a property of EMV rather than
+ * a limitation of the reader.
+ */
+val ItemKind.supportsNfcScan: Boolean
+    get() = this == ItemKind.CARD
+
+/**
+ * Whether this kind's [FieldSlot.Secret] is a *password* and therefore meaningful to look up in the
+ * Pwned Passwords corpus.
+ *
+ * Logins and Wi-Fi keys are; a card number, a passport number and a note are not. That is not a
+ * squeamishness call - the corpus contains passwords, so a lookup on a card number could only ever
+ * return "no match", while still turning a piece of the card's hash into outbound traffic. A check
+ * that cannot produce a useful answer is pure exposure, so those kinds are never checked.
+ */
+val ItemKind.supportsBreachCheck: Boolean
+    get() = this == ItemKind.LOGIN || this == ItemKind.WIFI

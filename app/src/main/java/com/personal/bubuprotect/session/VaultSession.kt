@@ -1,10 +1,11 @@
 package com.personal.bubuprotect.session
 
 import android.os.SystemClock
-import android.util.Log
+import com.personal.bubuprotect.core.autofill.PendingCapture
 import com.personal.bubuprotect.core.crypto.FieldCipher
 import com.personal.bubuprotect.core.crypto.VaultKeys
 import com.personal.bubuprotect.core.util.SecureClipboard
+import com.personal.bubuprotect.data.local.AutofillLinkDao
 import com.personal.bubuprotect.data.local.EncryptedDatabaseFactory
 import com.personal.bubuprotect.data.local.PasswordDao
 import com.personal.bubuprotect.data.local.VaultDatabase
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 import kotlinx.coroutines.withContext
 
 /**
@@ -46,6 +48,7 @@ class VaultSession(
     class Handle(
         internal val database: VaultDatabase,
         val dao: PasswordDao,
+        val linkDao: AutofillLinkDao,
         val fieldCipher: FieldCipher,
         private val keys: VaultKeys
     ) {
@@ -86,6 +89,7 @@ class VaultSession(
                 _handle.value = Handle(
                     database = database,
                     dao = database.passwordDao(),
+                    linkDao = database.autofillLinkDao(),
                     fieldCipher = FieldCipher(keys.fieldKey),
                     keys = keys
                 )
@@ -109,6 +113,10 @@ class VaultSession(
     /** Wipes the session. Safe to call when already locked. */
     fun lock() {
         clipboard.clear()
+        // A credential captured from another app but never confirmed is as sensitive as anything in
+        // the vault, and it lives on the heap rather than in the database - so locking has to drop
+        // it explicitly. Closing the database would otherwise leave it behind.
+        PendingCapture.clear()
         backgroundedAtElapsed = null
         scope.launch { transition.withLock { closeCurrent() } }
     }
@@ -117,7 +125,7 @@ class VaultSession(
         val previous = _handle.value ?: return
         _handle.value = null
         previous.shutDown()
-        Log.i(TAG, "Vault locked; keys wiped and database closed")
+        Timber.tag(TAG).i("Vault locked; keys wiped and database closed")
     }
 
     // --- Auto-lock -----------------------------------------------------------------------------

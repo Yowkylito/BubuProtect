@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,13 +26,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -40,9 +46,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Color.Companion.Transparent
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -52,6 +58,7 @@ import com.personal.bubuprotect.domain.model.ItemKind
 import com.personal.bubuprotect.ui.motion.BubuMotion
 import com.personal.bubuprotect.ui.motion.squish
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import com.personal.bubuprotect.ui.theme.BubuSpacing
 import com.personal.bubuprotect.ui.theme.PillShape
 import com.personal.bubuprotect.ui.theme.bubu
 import kotlin.math.ln
@@ -92,7 +99,7 @@ fun BubuButton(
             targetState = isBusy,
             transitionSpec = {
                 (fadeIn(tween(BubuMotion.FAST)) + scaleIn(initialScale = 0.8f)) togetherWith
-                    (fadeOut(tween(BubuMotion.FAST)) + scaleOut(targetScale = 0.8f))
+                        (fadeOut(tween(BubuMotion.FAST)) + scaleOut(targetScale = 0.8f))
             },
             label = "buttonBusy"
         ) { busy ->
@@ -103,7 +110,7 @@ fun BubuButton(
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(BubuSpacing.xs))
                     Text(busyText, style = MaterialTheme.typography.labelLarge)
                 }
             } else {
@@ -120,7 +127,10 @@ fun BubuOutlinedButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    leadingIcon: ImageVector? = null
+    leadingIcon: ImageVector? = null,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    borderColor: Color = MaterialTheme.bubu.cardBorder
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     OutlinedButton(
@@ -130,11 +140,19 @@ fun BubuOutlinedButton(
             .squish(interactionSource),
         enabled = enabled,
         shape = PillShape,
-        interactionSource = interactionSource
+        interactionSource = interactionSource,
+        border = BorderStroke(
+            1.dp,
+            borderColor.copy(alpha = if (enabled) 0.76f else 0.36f)
+        ),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = containerColor,
+            contentColor = contentColor
+        )
     ) {
         if (leadingIcon != null) {
             Icon(leadingIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(BubuSpacing.xs))
         }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
@@ -154,24 +172,78 @@ fun BubuIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    tonal: Boolean = false,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    IconButton(
-        onClick = onClick,
-        // 48dp is the accessibility floor, and IconButton's own default; stated so a caller passing
-        // a smaller size modifier gets clamped rather than silently shipping a 32dp target.
-        modifier = modifier.size(48.dp),
-        enabled = enabled,
-        interactionSource = interactionSource
+    val iconModifier = Modifier
+        .size(22.dp)
+        .squish(interactionSource, pressedScale = 0.82f)
+    // 48dp is the accessibility floor, and IconButton's own default; stated so a caller passing
+    // a smaller size modifier gets clamped rather than silently shipping a 32dp target.
+    val buttonModifier = modifier.size(48.dp)
+
+    if (tonal) {
+        FilledTonalIconButton(
+            onClick = onClick,
+            modifier = buttonModifier.border(
+                width = 1.dp,
+                color = MaterialTheme.bubu.cardBorder.copy(alpha = if (enabled) 0.68f else 0.3f),
+                shape = CircleShape
+            ),
+            enabled = enabled,
+            interactionSource = interactionSource,
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = Transparent,
+                contentColor = tint
+            )
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = iconModifier
+            )
+        }
+    } else {
+        IconButton(
+            onClick = onClick,
+            modifier = buttonModifier,
+            enabled = enabled,
+            interactionSource = interactionSource
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = if (enabled) tint else tint.copy(alpha = 0.38f),
+                modifier = iconModifier
+            )
+        }
+    }
+}
+
+/** A labelled split between two equal paths - used on unlock when fingerprint and passphrase coexist. */
+@Composable
+fun BubuOrDivider(
+    modifier: Modifier = Modifier,
+    text: String = "or"
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) tint else tint.copy(alpha = 0.38f),
-            modifier = Modifier
-                .size(22.dp)
-                .squish(interactionSource, pressedScale = 0.82f)
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = BubuSpacing.sm)
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
         )
     }
 }
@@ -193,8 +265,8 @@ fun KindFilterRow(
     val kinds = remember { ItemKind.entries.toList() }
     LazyRow(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp)
+        horizontalArrangement = Arrangement.spacedBy(BubuSpacing.xs),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = BubuSpacing.screen)
     ) {
         item(key = "all") {
             BubuFilterChip(
@@ -224,8 +296,8 @@ private fun BubuFilterChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    accentContainer: Color = MaterialTheme.colorScheme.primaryContainer,
-    accentContent: Color = MaterialTheme.colorScheme.onPrimaryContainer
+    accentContainer: Color = MaterialTheme.bubu.champagneContainer,
+    accentContent: Color = MaterialTheme.colorScheme.onSurface
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     FilterChip(
@@ -238,13 +310,18 @@ private fun BubuFilterChip(
             .heightIn(min = 40.dp)
             .squish(interactionSource, pressedScale = 0.93f),
         colors = FilterChipDefaults.filterChipColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
             selectedContainerColor = accentContainer,
-            selectedLabelColor = accentContent
+            selectedLabelColor = accentContent,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)
         ),
         border = FilterChipDefaults.filterChipBorder(
             enabled = enabled,
             selected = isSelected,
-            borderColor = MaterialTheme.colorScheme.outlineVariant
+            borderColor = MaterialTheme.bubu.cardBorder.copy(alpha = 0.68f),
+            selectedBorderColor = accentContent.copy(alpha = 0.22f),
+            disabledBorderColor = MaterialTheme.bubu.cardBorder.copy(alpha = 0.28f)
         ),
         label = { Text(label, style = MaterialTheme.typography.labelMedium) }
     )
@@ -334,7 +411,7 @@ fun SecretStrengthMeter(
         Canvas(
             Modifier
                 .fillMaxWidth()
-                .height(6.dp)
+                .height(BubuSpacing.xs / 2)
         ) {
             drawLine(
                 color = track,
@@ -347,7 +424,10 @@ fun SecretStrengthMeter(
                 drawLine(
                     color = color,
                     start = androidx.compose.ui.geometry.Offset(0f, size.height / 2),
-                    end = androidx.compose.ui.geometry.Offset(size.width * progress.value, size.height / 2),
+                    end = androidx.compose.ui.geometry.Offset(
+                        size.width * progress.value,
+                        size.height / 2
+                    ),
                     strokeWidth = size.height,
                     cap = StrokeCap.Round
                 )
@@ -365,7 +445,7 @@ fun SecretStrengthMeter(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
-                    .padding(top = 6.dp)
+                    .padding(top = BubuSpacing.xs)
                     .clearAndSetSemantics { }
             )
         }
@@ -384,7 +464,7 @@ fun CountdownRing(
         animationSpec = tween(1000, easing = androidx.compose.animation.core.LinearEasing),
         label = "countdown"
     )
-    val ring = MaterialTheme.colorScheme.primary
+    val ring = MaterialTheme.bubu.champagne
     val track = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
 
     Box(
@@ -400,7 +480,10 @@ fun CountdownRing(
                 startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    stroke,
+                    cap = StrokeCap.Round
+                ),
                 topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
                 size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
             )
@@ -409,7 +492,10 @@ fun CountdownRing(
                 startAngle = -90f,
                 sweepAngle = 360f * fraction.value,
                 useCenter = false,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    stroke,
+                    cap = StrokeCap.Round
+                ),
                 topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
                 size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
             )
@@ -424,6 +510,11 @@ fun CountdownRing(
 }
 
 @Preview(showBackground = true, name = "Controls")
+@Preview(
+    showBackground = true,
+    name = "Controls · dark",
+    uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES
+)
 @Composable
 private fun BubuControlsPreview() {
     BubuProtectTheme {
@@ -439,7 +530,19 @@ private fun BubuControlsPreview() {
                 busyText = "Unlocking",
                 modifier = Modifier.fillMaxWidth()
             )
-            BubuOutlinedButton(text = "Use passphrase", onClick = {}, modifier = Modifier.fillMaxWidth())
+            BubuOutlinedButton(
+                text = "Use passphrase",
+                onClick = {},
+                modifier = Modifier.fillMaxWidth()
+            )
+            BubuOutlinedButton(
+                text = "Delete this secret",
+                onClick = {},
+                contentColor = MaterialTheme.colorScheme.error,
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.28f),
+                borderColor = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth()
+            )
             SecretStrengthMeter(secret = "correct-horse-battery-staple-9!")
             SecretStrengthMeter(secret = "hunter2")
             KindFilterRow(

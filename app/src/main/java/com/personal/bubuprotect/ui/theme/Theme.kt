@@ -1,5 +1,11 @@
 package com.personal.bubuprotect.ui.theme
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -8,8 +14,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 
 /**
  * Dynamic colour is deliberately not used. Material You would pull the scheme from the user's
@@ -33,8 +42,12 @@ private val LightScheme = lightColorScheme(
     onSurface = Cocoa,
     surfaceVariant = CreamDeep,
     onSurfaceVariant = Taupe,
-    surfaceContainer = CreamDeep,
-    surfaceContainerHigh = Color(0xFFE2DBC9),
+    // A controlled paper stack: tone creates depth before a shadow ever has to.
+    surfaceContainerLowest = Color(0xFFFFFCF7),
+    surfaceContainerLow = Color(0xFFF8F3E9),
+    surfaceContainer = DuduSnow,
+    surfaceContainerHigh = Color(0xFFF7F1E6),
+    surfaceContainerHighest = CreamDeep,
     outline = Taupe,
     outlineVariant = Sage,
     error = ErrorRust,
@@ -61,8 +74,11 @@ private val DarkScheme = darkColorScheme(
     onSurface = CreamLight,
     surfaceVariant = NightSurfaceHigh,
     onSurfaceVariant = Sage,
+    surfaceContainerLowest = Color(0xFF25261F),
+    surfaceContainerLow = Color(0xFF303129),
     surfaceContainer = NightSurfaceHigh,
     surfaceContainerHigh = Color(0xFF4B4D42),
+    surfaceContainerHighest = Color(0xFF56584C),
     outline = Sage,
     outlineVariant = Olive,
     error = ErrorSand,
@@ -98,7 +114,12 @@ data class BubuColors(
     val fair: Color,
     val strong: Color,
     /** The soft disc the mascots sit on. */
-    val backdrop: Color
+    val backdrop: Color,
+    /** Quiet luxury accents, deliberately separate from semantic primary/error roles. */
+    val champagne: Color,
+    val champagneContainer: Color,
+    /** Hairline edge that makes a card feel precise without making it look boxed in. */
+    val cardBorder: Color
 )
 
 private val LightBubuColors = BubuColors(
@@ -110,7 +131,10 @@ private val LightBubuColors = BubuColors(
     weak = ErrorRust,
     fair = HoneyGold,
     strong = LeafGreen,
-    backdrop = Color(0xFFE7E0CF)
+    backdrop = Color(0xFFE7E0CF),
+    champagne = Champagne,
+    champagneContainer = ChampagneWash,
+    cardBorder = Color(0xFFD8CDBA)
 )
 
 private val DarkBubuColors = BubuColors(
@@ -122,7 +146,10 @@ private val DarkBubuColors = BubuColors(
     weak = ErrorSand,
     fair = Color(0xFFE0BC6B),
     strong = Color(0xFF9FBE92),
-    backdrop = Color(0xFF3D3F35)
+    backdrop = Color(0xFF3D3F35),
+    champagne = NightChampagne,
+    champagneContainer = NightChampagneWash,
+    cardBorder = Color(0xFF5B5D51)
 )
 
 private val LocalBubuColors = staticCompositionLocalOf { LightBubuColors }
@@ -138,14 +165,65 @@ fun BubuProtectTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
+    val colorScheme = if (darkTheme) DarkScheme else LightScheme
+
+    ApplySystemBars(darkTheme = darkTheme, background = colorScheme.background)
+
     CompositionLocalProvider(
         LocalBubuColors provides if (darkTheme) DarkBubuColors else LightBubuColors
     ) {
         MaterialTheme(
-            colorScheme = if (darkTheme) DarkScheme else LightScheme,
+            colorScheme = colorScheme,
             typography = Typography,
             shapes = Shapes,
             content = content
         )
     }
+}
+
+/**
+ * Makes the status and navigation bars use the theme surface instead of a system scrim.
+ *
+ * `SystemBarStyle.auto` turns *on* [android.view.Window.isNavigationBarContrastEnforced], and
+ * Android then paints a white (or black) plate behind the gesture pill / 3-button nav so the
+ * icons stay readable. That plate is what made the bar look like a foreign footer. `light` /
+ * `dark` do not request that plate; we also switch the enforcement flag off and tint the bar
+ * with [background] so 3-button nav on OEM skins still matches cream or night olive.
+ */
+@Composable
+private fun ApplySystemBars(darkTheme: Boolean, background: Color) {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+    val backgroundArgb = background.toArgb()
+    val activity = view.context.findComponentActivity() ?: return
+
+    DisposableEffect(darkTheme, backgroundArgb, activity) {
+        // enableEdgeToEdge is a ComponentActivity extension, not Activity. Compose's view
+        // context is also often a ContextThemeWrapper, so we walk to the host rather than
+        // casting the first Context we see.
+        val barStyle = if (darkTheme) {
+            SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        } else {
+            SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            )
+        }
+        activity.enableEdgeToEdge(
+            statusBarStyle = barStyle,
+            navigationBarStyle = barStyle
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            activity.window.isNavigationBarContrastEnforced = false
+        }
+        @Suppress("DEPRECATION")
+        activity.window.navigationBarColor = backgroundArgb
+        onDispose { }
+    }
+}
+
+private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (this) {
+    is ComponentActivity -> this
+    is ContextWrapper -> baseContext.findComponentActivity()
+    else -> null
 }

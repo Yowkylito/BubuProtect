@@ -1,5 +1,8 @@
 package com.personal.bubuprotect.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -10,16 +13,24 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,8 +40,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -41,25 +57,34 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import com.personal.bubuprotect.R
 import com.personal.bubuprotect.core.crypto.PassphraseKdf
+import com.personal.bubuprotect.data.local.UserPreferences
 import com.personal.bubuprotect.core.security.IntegrityChecker
+import com.personal.bubuprotect.ui.components.BackupPassphraseDialog
 import com.personal.bubuprotect.ui.components.BubuButton
 import com.personal.bubuprotect.ui.components.BubuMascot
 import com.personal.bubuprotect.ui.components.BubuMood
+import com.personal.bubuprotect.ui.components.BubuOrDivider
 import com.personal.bubuprotect.ui.components.BubuOutlinedButton
 import com.personal.bubuprotect.ui.components.LoadingPane
+import com.personal.bubuprotect.ui.components.ResponsiveContainer
 import com.personal.bubuprotect.ui.components.SecretStrengthMeter
 import com.personal.bubuprotect.ui.components.SecretTextField
 import com.personal.bubuprotect.ui.components.SecurityWarningBanner
 import com.personal.bubuprotect.ui.motion.BubuMotion
 import com.personal.bubuprotect.ui.motion.wobble
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import com.personal.bubuprotect.ui.theme.BubuElevation
+import com.personal.bubuprotect.ui.theme.BubuSpacing
+import com.personal.bubuprotect.ui.theme.bubu
 import com.personal.bubuprotect.ui.vm.UnlockStage
 import com.personal.bubuprotect.ui.vm.UnlockUiState
 import com.personal.bubuprotect.ui.vm.UnlockViewModel
 import com.personal.bubuprotect.ui.vm.rememberBiometricGate
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 
 /**
  * The stateful wrapper.
@@ -72,7 +97,8 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun UnlockRoute(
     modifier: Modifier = Modifier,
-    viewModel: UnlockViewModel = koinViewModel()
+    viewModel: UnlockViewModel = koinViewModel(),
+    userPreferences: UserPreferences = koinInject()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val gate = rememberBiometricGate()
@@ -82,20 +108,92 @@ fun UnlockRoute(
     // and been auto-locked back out to this screen.
     LaunchedEffect(Unit) { viewModel.refresh() }
 
-    UnlockScreen(
-        state = state,
-        onPassphraseChange = viewModel::onPassphraseChange,
-        onConfirmationChange = viewModel::onConfirmationChange,
-        onSubmit = {
-            when (state.stage) {
-                UnlockStage.SETUP -> viewModel.completeSetup(gate)
-                UnlockStage.LOCKED -> viewModel.unlockWithPassphrase()
-                UnlockStage.CHECKING -> Unit
-            }
-        },
-        onBiometricUnlock = { viewModel.unlockWithBiometrics(gate) },
+    /*
+     * Onboarding is gated on enrollment, not on a preference.
+     *
+     * [UnlockStage.SETUP] means `VaultKeyStore.isEnrolled` is false - there is no passphrase yet.
+     * That is the only signal in this app that means "freshly installed", it is persisted in
+     * keystore metadata rather than written at the end of a screen, and it stops being true the
+     * instant the vault is created. So the guide can appear at most once per install no matter what
+     * happens to the process in between.
+     *
+     * The preference is a second, softer gate on top: it stops the guide reappearing if the user
+     * skips it and then backgrounds the app while still on setup. If it were the *only* gate - as it
+     * was when this lived in the unlocked shell - then any session that ended before the guide was
+     * dismissed (screen off locks immediately, and a 60s background does too) would leave it unset
+     * and show the guide again on the next unlock.
+     */
+    var guideDismissed by rememberSaveable { mutableStateOf(userPreferences.hasSeenSecurityGuide) }
+    val showGuide = state.stage == UnlockStage.SETUP && !guideDismissed
+
+    /*
+     * Restore, in two steps: pick the file, then ask for its passphrase.
+     *
+     * `OpenDocument` with a wildcard filter rather than a specific MIME type - a backup written to
+     * Drive or copied between phones frequently comes back typed as `application/octet-stream`,
+     * `text/plain`, or nothing at all, and a strict filter would grey out the user's own file in the
+     * picker. The magic bytes are the real check, and they run before the passphrase is used.
+     */
+    var restoreSource by remember { mutableStateOf<Uri?>(null) }
+    val restorePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> restoreSource = uri }
+
+    // The vault opening is what dismisses this dialog - VaultSession.isUnlocked flips and the whole
+    // screen is composed away - so there is no success path to handle here. A failure leaves the
+    // dialog up with the message rendered by UnlockScreen behind it.
+    LaunchedEffect(state.message, state.failureToken) {
+        if (state.message != null && state.isMessageAnError) restoreSource = null
+    }
+
+    AnimatedContent(
+        targetState = showGuide,
+        // Forward, not a cross-fade: "Build my vault" moves the user onward through a setup flow
+        // rather than swapping one view of the same thing for another.
+        transitionSpec = { BubuMotion.forwardEnter() togetherWith BubuMotion.forwardExit() },
+        label = "setupGuide",
         modifier = modifier
-    )
+    ) { guide ->
+        if (guide) {
+            SecurityGuideScreen(
+                onDone = {
+                    userPreferences.markSecurityGuideSeen()
+                    guideDismissed = true
+                },
+                showSkip = true,
+                doneLabel = "Build my vault"
+            )
+        } else {
+            UnlockScreen(
+                state = state,
+                onPassphraseChange = viewModel::onPassphraseChange,
+                onConfirmationChange = viewModel::onConfirmationChange,
+                onSubmit = {
+                    when (state.stage) {
+                        UnlockStage.SETUP -> viewModel.completeSetup(gate)
+                        UnlockStage.LOCKED -> viewModel.unlockWithPassphrase()
+                        UnlockStage.CHECKING -> Unit
+                    }
+                },
+                onBiometricUnlock = { viewModel.unlockWithBiometrics(gate) },
+                onRestoreBackup = { restorePicker.launch(arrayOf("*/*")) }
+            )
+        }
+    }
+
+    restoreSource?.let { source ->
+        BackupPassphraseDialog(
+            title = "Restore this backup",
+            body = "Enter the master passphrase that was protecting this file when you saved it. " +
+                "Bubu will rebuild the vault from it.",
+            confirmLabel = "Restore",
+            mood = BubuMood.THINKING,
+            isBusy = state.isBusy,
+            footnote = "That passphrase becomes this vault's passphrase. You can change it later.",
+            onConfirm = { passphrase -> viewModel.restoreFromBackup(source, passphrase, gate) },
+            onDismiss = { restoreSource = null }
+        )
+    }
 }
 
 /**
@@ -113,87 +211,171 @@ fun UnlockScreen(
     onConfirmationChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onBiometricUnlock: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Null in previews and wherever restore is not offered. */
+    onRestoreBackup: (() -> Unit)? = null
 ) {
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+    val scheme = MaterialTheme.colorScheme
+    val bubu = MaterialTheme.bubu
+    var passphraseVisible by rememberSaveable { mutableStateOf(false) }
+    var didAutoPromptBiometric by rememberSaveable { mutableStateOf(false) }
+    var focusedField by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Returning users with fingerprint unlock get the system prompt as soon as the lock screen
+    // paints - the same path Apple Passwords and 1Password take. Cancelled once, it stays cancelled
+    // for this composition so a declined prompt does not loop. Locking the vault recomposes this
+    // screen and the prompt is offered again, which is what "I locked it, I want back in" means.
+    LaunchedEffect(
+        state.stage,
+        state.biometricUnlockOffered,
+        state.isLockedOut,
+        state.isBusy
+    ) {
+        if (
+            !didAutoPromptBiometric &&
+            state.stage == UnlockStage.LOCKED &&
+            state.biometricUnlockOffered &&
+            !state.isLockedOut &&
+            !state.isBusy
+        ) {
+            didAutoPromptBiometric = true
+            delay(380)
+            onBiometricUnlock()
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        bubu.champagneContainer.copy(alpha = 0.62f),
+                        scheme.primaryContainer.copy(alpha = 0.24f),
+                        scheme.background,
+                        scheme.background
+                    )
+                )
+            )
     ) {
         if (state.stage == UnlockStage.CHECKING) {
             LoadingPane(label = "Looking for your vault")
-            return@Surface
+            return@Box
         }
 
-        Column(
+        val biometricPrimary = state.stage == UnlockStage.LOCKED &&
+            state.biometricUnlockOffered &&
+            !state.isLockedOut
+        val typingPassphrase = state.passphrase.isNotEmpty()
+
+        ResponsiveContainer(
             modifier = Modifier
                 .fillMaxSize()
-                // Order matters, and getting it wrong here makes the form unreachable.
-                //
-                // `safeDrawing` already covers the status bar, the navigation bar, the cutout *and*
-                // the IME, so adding imePadding()/navigationBarsPadding() on top would subtract the
-                // keyboard height twice and push the submit button off the bottom.
-                //
-                // The inset padding also has to come *before* verticalScroll: applied after, it pads
-                // the scrolling content instead of shrinking the viewport, so the content grows by
-                // exactly as much as the space it lost and never comes back into reach.
-                .safeDrawingPadding()
+                // System bars constrain the stable viewport. IME padding is deliberately owned by
+                // the form Surface below, so keyboard animation does not remeasure the mascot and
+                // heading on every frame.
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Horizontal + WindowInsetsSides.Top
+                    )
+                )
+                .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = BubuSpacing.lg),
+            maxContentWidth = 480.dp,
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(BubuSpacing.lg))
 
             BubuMascot(
                 mood = state.mood(),
-                size = 180.dp,
-                // Only the idle mascot breathes. During key derivation the CPU has better things to
-                // do than run a decorative animation, and after a failure a calm bear is the wrong
-                // note.
-                breathing = !state.isBusy,
+                size = 168.dp,
+                // Pause the extra Compose breathing motion while typing or doing key derivation.
+                // The GIF itself still goes through Coil; painterResource cannot decode GIF files.
+                breathing = !state.isBusy && focusedField == null,
                 contentDescription = null
             )
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(BubuSpacing.md))
 
             Text(
                 text = when (state.stage) {
-                    UnlockStage.SETUP -> "Hello, Bubu"
+                    UnlockStage.SETUP -> "Hello, you two"
                     else -> "Welcome back"
                 },
                 style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onBackground
+                color = scheme.onBackground
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(BubuSpacing.xxs))
             Text(
                 text = when (state.stage) {
                     UnlockStage.SETUP -> "Pick a master passphrase. It is the only thing that can " +
-                        "open this vault, and Bubu cannot reset it for you."
-                    else -> "Prove that you are my Bubu"
+                        "open this vault, and Bubu and Dudu cannot reset it for you."
+                    else -> if (biometricPrimary) {
+                        "Unlock with your fingerprint, or type your passphrase."
+                    } else {
+                        "Prove it to Bubu and Dudu"
+                    }
                 },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.widthIn(max = 420.dp)
             )
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(BubuSpacing.screen))
 
             SecurityWarningBanner(
                 findings = state.warnings,
                 modifier = Modifier
-                    .widthIn(max = 480.dp)
-                    .padding(bottom = 16.dp)
+                    .fillMaxWidth()
+                    .padding(bottom = BubuSpacing.md)
             )
 
             // The whole form shakes on a rejection, not just the field - the message sits under the
             // fields, and moving them together keeps the two visually attached.
-            Column(
+            Surface(
                 modifier = Modifier
-                    .widthIn(max = 480.dp)
                     .fillMaxWidth()
-                    .wobble(trigger = state.failureToken.takeIf { it > 0 })
+                    .imePadding()
+                    .wobble(trigger = state.failureToken.takeIf { it > 0 }),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = scheme.surfaceContainerLowest.copy(alpha = 0.94f),
+                shadowElevation = BubuElevation.card,
+                border = BorderStroke(1.dp, bubu.cardBorder.copy(alpha = 0.76f))
             ) {
+                Column(Modifier.padding(BubuSpacing.md)) formColumn@{
+                AnimatedVisibility(
+                    visible = biometricPrimary,
+                    enter = fadeIn(tween(BubuMotion.MEDIUM)) + expandVertically(tween(BubuMotion.MEDIUM)),
+                    exit = fadeOut(tween(BubuMotion.FAST)) + shrinkVertically(tween(BubuMotion.FAST))
+                ) {
+                    Column {
+                        if (typingPassphrase) {
+                            BubuOutlinedButton(
+                                text = "Use my fingerprint",
+                                onClick = onBiometricUnlock,
+                                enabled = !state.isBusy,
+                                leadingIcon = ImageVector.vectorResource(R.drawable.ic_fingerprint),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            BubuButton(
+                                text = "Unlock with fingerprint",
+                                onClick = onBiometricUnlock,
+                                enabled = !state.isBusy,
+                                isBusy = state.isBusy,
+                                busyText = "Unlocking",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Spacer(Modifier.height(BubuSpacing.md))
+                        BubuOrDivider()
+                        Spacer(Modifier.height(BubuSpacing.md))
+                    }
+                }
+
                 AnimatedContent(
                     targetState = state.stage,
                     transitionSpec = {
@@ -209,6 +391,15 @@ fun UnlockScreen(
                             value = state.passphrase,
                             onValueChange = onPassphraseChange,
                             label = "Master passphrase",
+                            isVisible = passphraseVisible,
+                            onVisibilityToggle = { passphraseVisible = !passphraseVisible },
+                            onFocusStateChange = { focused ->
+                                focusedField = when {
+                                    focused -> "passphrase"
+                                    focusedField == "passphrase" -> null
+                                    else -> focusedField
+                                }
+                            },
                             enabled = !state.isBusy && !state.isLockedOut,
                             imeAction = if (stage == UnlockStage.SETUP) {
                                 ImeAction.Next
@@ -225,13 +416,25 @@ fun UnlockScreen(
                         if (stage == UnlockStage.SETUP) {
                             SecretStrengthMeter(
                                 secret = state.passphrase,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                                modifier = Modifier.padding(
+                                    horizontal = BubuSpacing.xxs,
+                                    vertical = BubuSpacing.xs
+                                )
                             )
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(BubuSpacing.xxs))
                             SecretTextField(
                                 value = state.confirmation,
                                 onValueChange = onConfirmationChange,
                                 label = "Type it once more",
+                                isVisible = passphraseVisible,
+                                onVisibilityToggle = { passphraseVisible = !passphraseVisible },
+                                onFocusStateChange = { focused ->
+                                    focusedField = when {
+                                        focused -> "confirmation"
+                                        focusedField == "confirmation" -> null
+                                        else -> focusedField
+                                    }
+                                },
                                 enabled = !state.isBusy,
                                 imeAction = ImeAction.Done
                             )
@@ -249,54 +452,85 @@ fun UnlockScreen(
                         text = state.message.orEmpty(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (state.isMessageAnError) {
-                            MaterialTheme.colorScheme.error
+                            scheme.error
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            scheme.onSurfaceVariant
                         },
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 12.dp)
+                            .padding(top = BubuSpacing.sm)
                             // Assertive: a failed unlock is exactly the kind of thing a screen
                             // reader user must hear without hunting for it.
                             .semantics { liveRegion = LiveRegionMode.Assertive }
                     )
                 }
 
-                Spacer(Modifier.height(20.dp))
+                val showPassphraseSubmit = !biometricPrimary || typingPassphrase ||
+                    state.stage == UnlockStage.SETUP ||
+                    state.isLockedOut
 
-                BubuButton(
-                    text = when {
-                        state.isLockedOut -> "Wait ${state.lockoutSecondsRemaining}s"
-                        state.stage == UnlockStage.SETUP -> "Create my vault"
-                        else -> "Open the vault"
-                    },
-                    onClick = onSubmit,
-                    enabled = state.canSubmit,
-                    isBusy = state.isBusy,
-                    busyText = if (state.stage == UnlockStage.SETUP) "Building it" else "Unlocking",
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                AnimatedVisibility(
-                    visible = state.biometricUnlockOffered && !state.isLockedOut,
-                    enter = fadeIn(tween(BubuMotion.MEDIUM)) + expandVertically(tween(BubuMotion.MEDIUM)),
-                    exit = fadeOut(tween(BubuMotion.FAST)) + shrinkVertically(tween(BubuMotion.FAST))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 72.dp),
+                    verticalArrangement = Arrangement.Bottom
                 ) {
-                    Column {
-                        Spacer(Modifier.height(12.dp))
-                        BubuOutlinedButton(
-                            text = "Use my fingerprint",
-                            onClick = onBiometricUnlock,
-                            enabled = !state.isBusy,
-                            leadingIcon = ImageVector.vectorResource(R.drawable.ic_fingerprint),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    this@formColumn.AnimatedVisibility(
+                        visible = showPassphraseSubmit,
+                        enter = fadeIn(tween(BubuMotion.FAST)),
+                        exit = fadeOut(tween(BubuMotion.FAST))
+                    ) {
+                        Column {
+                            Spacer(Modifier.height(BubuSpacing.screen))
+                            BubuButton(
+                                text = when {
+                                    state.isLockedOut -> "Wait ${state.lockoutSecondsRemaining}s"
+                                    state.stage == UnlockStage.SETUP -> "Create my vault"
+                                    else -> "Open with passphrase"
+                                },
+                                onClick = onSubmit,
+                                enabled = state.canSubmit,
+                                isBusy = state.isBusy &&
+                                    (state.stage == UnlockStage.SETUP ||
+                                        typingPassphrase ||
+                                        !biometricPrimary),
+                                busyText = if (state.stage == UnlockStage.SETUP) {
+                                    "Building it"
+                                } else {
+                                    "Unlocking"
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Setup only. Restoring into a vault that already exists would need
+                            // merge semantics - which entry wins, what happens to one that exists
+                            // in both - and inventing an answer to that silently is how people
+                            // lose passwords. Reinstalling is the case this feature is for.
+                            if (state.stage == UnlockStage.SETUP && onRestoreBackup != null) {
+                                Spacer(Modifier.height(BubuSpacing.sm))
+                                BubuOutlinedButton(
+                                    text = "Restore from a backup",
+                                    onClick = onRestoreBackup,
+                                    enabled = !state.isBusy,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(Modifier.height(BubuSpacing.xs))
+                                Text(
+                                    text = "Reinstalled, or moving to a new phone? Pick the backup " +
+                                        "file you saved and Bubu will rebuild the vault from it.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
                     }
                 }
             }
+            }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(BubuSpacing.xl))
         }
     }
 }
@@ -324,6 +558,8 @@ private fun UnlockSetupPreview() {
 }
 
 @Preview(name = "Locked", showBackground = true)
+@Preview(name = "Locked · dark", showBackground = true, uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "Locked · large text", showBackground = true, fontScale = 1.3f)
 @Composable
 private fun UnlockLockedPreview() {
     BubuProtectTheme {

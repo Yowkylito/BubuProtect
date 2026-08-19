@@ -5,10 +5,11 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
-import android.util.Log
+import androidx.annotation.RequiresApi
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
+import timber.log.Timber
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
@@ -37,7 +38,7 @@ class KeystoreKek {
     fun exists(): Boolean = runCatching { keyStore.containsAlias(ALIAS) }.getOrDefault(false)
 
     fun delete() = runCatching { keyStore.deleteEntry(ALIAS) }.getOrElse {
-        Log.w(TAG, "Could not delete KEK: ${it.javaClass.simpleName}")
+        Timber.tag(TAG).w("Could not delete KEK: %s", it.javaClass.simpleName)
     }
 
     /**
@@ -48,10 +49,19 @@ class KeystoreKek {
      */
     fun create() {
         delete()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            generateStrongBoxOrFallback()
+        } else {
+            generate(strongBox = false)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.P)
+    private fun generateStrongBoxOrFallback() {
         try {
-            generate(strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+            generate(strongBox = true)
         } catch (unavailable: StrongBoxUnavailableException) {
-            Log.i(TAG, "StrongBox unavailable, falling back to TEE-backed key")
+            Timber.tag(TAG).i("StrongBox unavailable, falling back to TEE-backed key")
             generate(strongBox = false)
         }
     }

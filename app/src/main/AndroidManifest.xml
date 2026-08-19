@@ -2,12 +2,64 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        The vault is deliberately offline. No INTERNET permission means no code path
-        in this app - or in any library it links - can exfiltrate a stored credential.
-        No CAMERA either: face recognition was removed.
+        INTERNET is used only by the explicit Pwned Passwords range check. That request contains a
+        five-character SHA-1 prefix and no vault field, account identifier, site, or full hash.
+        Cleartext traffic is disabled on the application below. No CAMERA: face recognition was
+        removed.
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!--
+        NFC reads a payment card's number and expiry into the entry editor, and does nothing else.
+
+        Note what is deliberately absent: there is no TECH_DISCOVERED or NDEF_DISCOVERED
+        intent-filter anywhere in this manifest. Declaring one would let the system wake this app for
+        any tag that passed near the phone - a permanently-armed card reader in the user's pocket.
+        Instead the app uses reader mode, which only exists while the scan sheet is on screen, so a
+        card can only be read during the seconds the user is looking at a screen that says so.
+
+        required="false" keeps the app installable on phones with no NFC controller; the editor hides
+        the scan button there rather than offering one that cannot work.
+    -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature
+        android:name="android.hardware.nfc"
+        android:required="false" />
+
+    <!--
+        Package visibility for the device check, and nothing wider than it needs.
+
+        The device check tells the user which apps hold a capability that could reach the vault -
+        reading the screen, reading notifications, admin control. Android hands us the *component
+        names* of those without any declaration, but turning "com.example.thing/.Service" into a name
+        a human can act on means loading that package's label, and since Android 11 that requires
+        package visibility.
+
+        Note what is deliberately absent: QUERY_ALL_PACKAGES. It would resolve every label in one line
+        and it is the wrong answer twice over. Play treats it as a restricted permission a password
+        manager has no case for, and more to the point it would give this app the ability to inventory
+        everything the user has installed - which is close to the capability the device check exists to
+        warn them about. An app that fingerprints your phone in order to tell you what is fingerprinting
+        your phone has not helped.
+
+        These three filters are the minimum that answers the question: they make visible only apps that
+        declare one of the three dangerous service types the check reports on. Anything outside them
+        stays invisible, the label lookup fails, and the user sees a raw package name - a worse row, not
+        a broken feature.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
+        </intent>
+        <intent>
+            <action android:name="android.service.notification.NotificationListenerService" />
+        </intent>
+        <intent>
+            <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+        </intent>
+    </queries>
 
     <!--
         taskAffinity="" and allowTaskReparenting="false" are the StrandHogg defence.
@@ -30,7 +82,8 @@
         android:roundIcon="@drawable/loading3"
         android:supportsRtl="true"
         android:taskAffinity=""
-        android:theme="@style/Theme.BubuProtect">
+        android:theme="@style/Theme.BubuProtect"
+        android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:allowTaskReparenting="false"
@@ -45,6 +98,53 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            The autofill service.
+
+            `BIND_AUTOFILL_SERVICE` is the whole access-control story: only the system holds that
+            permission, so nothing else on the device can bind here and ask this app to produce a
+            credential. `exported="true"` is required for the system to reach it at all and is safe
+            precisely because of that permission.
+        -->
+        <service
+            android:name=".core.autofill.BubuAutofillService"
+            android:exported="true"
+            android:label="@string/autofill_service_label"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/autofill_service" />
+        </service>
+
+        <!--
+            The screen behind a suggestion: unlock, pick, or save.
+
+            `exported="false"` - it is only ever started by this app's own PendingIntents, which the
+            system launches on our behalf. Nothing outside can ask it to hand back a dataset.
+
+            `excludeFromRecents` matters more than it looks. This activity can show the master
+            passphrase field and, in the picker, the label of every login in the vault. A snapshot of
+            that sitting in the recents carousel would undo the work `SecureWindow` does on the main
+            activity, and recents is exactly where someone with the unlocked phone looks first.
+
+            The empty task affinity is the same StrandHogg defence the main activity carries, and it
+            matters more here: this window appears on top of *other* apps by design, so it is the one
+            an attacker would most want to sit in front of.
+        -->
+        <activity
+            android:name=".ui.autofill.AutofillAuthActivity"
+            android:allowTaskReparenting="false"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|fontScale|locale"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.BubuProtect.Autofill"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

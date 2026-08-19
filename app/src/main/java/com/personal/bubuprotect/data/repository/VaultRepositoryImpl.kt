@@ -1,7 +1,10 @@
 package com.personal.bubuprotect.data.repository
 
 import com.personal.bubuprotect.core.crypto.FieldCipher
+import com.personal.bubuprotect.data.local.AutofillLinkEntity
 import com.personal.bubuprotect.data.local.PasswordEntity
+import com.personal.bubuprotect.domain.model.BreachStatus
+import com.personal.bubuprotect.domain.model.BreachVerdict
 import com.personal.bubuprotect.domain.model.ItemKind
 import com.personal.bubuprotect.domain.model.VaultDraft
 import com.personal.bubuprotect.domain.model.VaultEntry
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import timber.log.Timber
 import java.util.UUID
 import javax.crypto.AEADBadTagException
 
@@ -61,6 +65,16 @@ class VaultRepositoryImpl(
         // show up as a present-but-empty row in the detail view.
         val extras = draft.extras.filterValues { it.isNotBlank() }
 
+        // Does this save actually change the password? Renaming an entry or fixing its notes must
+        // not throw away a breach verdict that is still true, so the existing secret is decrypted
+        // once and compared. Ciphertext cannot be compared instead: AES-GCM uses a fresh IV every
+        // time, so re-sealing the same password produces entirely different bytes.
+        val previousSecret = existing?.let {
+            runCatching { it.decrypt(cipher, FieldCipher.Field.PASSWORD, it.passwordCipher) }
+                .getOrNull()
+        }
+        val secretUnchanged = existing != null && previousSecret == draft.secret
+
         handle.dao.upsert(
             PasswordEntity(
                 id = id,
@@ -77,18 +91,146 @@ class VaultRepositoryImpl(
                     .takeIf { it.isNotEmpty() }
                     ?.let { cipher.encrypt(id, FieldCipher.Field.EXTRAS, it.toJson()) },
                 createdAt = existing?.createdAt ?: now,
-                updatedAt = now
+                updatedAt = now,
+                secretUpdatedAt = if (secretUnchanged) existing.secretUpdatedAt else now,
+                // A changed password has no verdict, and must not inherit the old one - that is the
+                // single most dangerous thing this file could get wrong, because it would show a
+                // green "safe" badge over a password nothing has ever checked.
+                breachCount = if (secretUnchanged) existing.breachCount else BreachStatus.NEVER_CHECKED,
+                breachCheckedAt = if (secretUnchanged) existing.breachCheckedAt else 0L,
+                breachAcknowledgedAt = if (secretUnchanged) existing.breachAcknowledgedAt else 0L
             )
         )
         id
     }
 
     override suspend fun delete(id: String) = withContext(Dispatchers.IO) {
-        session.requireHandle().dao.deleteById(id)
+        val handle = session.requireHandle()
+        // The autofill_links foreign key already cascades. This is deliberate belt-and-braces: the
+        // cascade only fires while SQLite has foreign key enforcement switched on, and that is a
+        // connection pragma rather than a property of the file. A stale link is not merely untidy -
+        // it is a stored trust decision pointing at an id that is free to be reused.
+        handle.linkDao.deleteForEntry(id)
+        handle.dao.deleteById(id)
+    }
+
+    override suspend fun linkedEntryIds(targetKey: String, signature: String?): Set<String> =
+        withContext(Dispatchers.IO) {
+            session.requireHandle().linkDao.findByTarget(targetKey)
+                .filter { link ->
+                    // Null on both sides is a website link, where the domain is the identity and
+                    // there is no APK to sign anything. Anything else has to match exactly.
+                    val matches = link.signature == signature
+                    if (!matches) {
+                        Timber.tag(AUTOFILL_TAG).w(
+                            "Ignoring link for %s: the requesting app is signed by a different key",
+                            targetKey
+                        )
+                    }
+                    matches
+                }
+                .map { it.entryId }
+                .toSet()
+        }
+
+    override suspend fun rememberAutofillLink(
+        targetKey: String,
+        entryId: String,
+        signature: String?
+    ) = withContext(Dispatchers.IO) {
+        session.requireHandle().linkDao.upsert(
+            AutofillLinkEntity(
+                targetKey = targetKey,
+                entryId = entryId,
+                signature = signature,
+                linkedAt = clock()
+            )
+        )
     }
 
     override suspend fun count(): Int = withContext(Dispatchers.IO) {
         session.requireHandle().dao.count()
+    }
+
+    override suspend fun recordBreachCheck(
+        id: String,
+        exposureCount: Long,
+        secretUpdatedAt: Long
+    ): Boolean = withContext(Dispatchers.IO) {
+        session.requireHandle().dao.recordBreachCheck(
+            id = id,
+            exposureCount = exposureCount,
+            checkedAt = clock(),
+            secretUpdatedAt = secretUpdatedAt
+        ) > 0
+    }
+
+    override suspend fun acknowledgeBreach(id: String) = withContext(Dispatchers.IO) {
+        session.requireHandle().dao.acknowledgeBreach(id, clock())
+    }
+
+    override suspend fun acknowledgeAllBreaches() = withContext(Dispatchers.IO) {
+        session.requireHandle().dao.acknowledgeAllBreaches(clock())
+    }
+
+    override suspend fun exportEntries(): List<VaultEntry> = withContext(Dispatchers.IO) {
+        val handle = session.requireHandle()
+        handle.dao.findAll().map { it.toEntry(handle.fieldCipher) }
+    }
+
+    override suspend fun restoreEntries(entries: List<VaultEntry>): Int =
+        withContext(Dispatchers.IO) {
+            val handle = session.requireHandle()
+            val cipher = handle.fieldCipher
+
+            entries.forEach { entry ->
+                val extras = entry.extras.filterValues { it.isNotBlank() }
+                handle.dao.upsert(
+                    PasswordEntity(
+                        // The id is re-used, not regenerated. It is part of the GCM AAD, so the
+                        // fields are re-sealed against it here under the *new* vault's field key -
+                        // which is why a restore cannot simply copy ciphertext across.
+                        id = entry.id,
+                        label = entry.label,
+                        website = entry.website?.takeIf(String::isNotEmpty),
+                        category = entry.category.ifEmpty { VaultEntry.DEFAULT_CATEGORY },
+                        kind = entry.kind.storageKey,
+                        usernameCipher = cipher.encrypt(
+                            entry.id,
+                            FieldCipher.Field.USERNAME,
+                            entry.identity
+                        ),
+                        passwordCipher = cipher.encrypt(
+                            entry.id,
+                            FieldCipher.Field.PASSWORD,
+                            entry.secret
+                        ),
+                        notesCipher = entry.notes
+                            ?.takeIf(String::isNotBlank)
+                            ?.let { cipher.encrypt(entry.id, FieldCipher.Field.NOTES, it) },
+                        extrasCipher = extras
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { cipher.encrypt(entry.id, FieldCipher.Field.EXTRAS, it.toJson()) },
+                        createdAt = entry.createdAt,
+                        updatedAt = entry.updatedAt,
+                        secretUpdatedAt = entry.secretUpdatedAt,
+                        breachCount = entry.breach.storedCount(),
+                        breachCheckedAt = entry.breach.checkedAt,
+                        breachAcknowledgedAt = if (entry.breach.isAcknowledged) {
+                            entry.breach.checkedAt
+                        } else {
+                            0L
+                        }
+                    )
+                )
+            }
+            entries.size
+        }
+
+    private fun BreachStatus.storedCount(): Long = when (verdict) {
+        BreachVerdict.UNCHECKED -> BreachStatus.NEVER_CHECKED
+        BreachVerdict.SAFE -> 0L
+        BreachVerdict.BREACHED -> exposureCount
     }
 
     private fun PasswordEntity.toItem(cipher: FieldCipher) = VaultItem(
@@ -98,6 +240,7 @@ class VaultRepositoryImpl(
         subtitle = decrypt(cipher, FieldCipher.Field.USERNAME, usernameCipher),
         website = website,
         category = category,
+        breach = breachStatus(),
         updatedAt = updatedAt
     )
 
@@ -114,8 +257,17 @@ class VaultRepositoryImpl(
             ?.let(::parseExtras)
             ?: emptyMap(),
         category = category,
+        breach = breachStatus(),
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        secretUpdatedAt = secretUpdatedAt
+    )
+
+    private fun PasswordEntity.breachStatus(): BreachStatus = BreachStatus.from(
+        exposureCount = breachCount,
+        checkedAt = breachCheckedAt,
+        acknowledgedAt = breachAcknowledgedAt,
+        secretUpdatedAt = secretUpdatedAt
     )
 
     private fun PasswordEntity.decrypt(cipher: FieldCipher, field: FieldCipher.Field, box: ByteArray): String =
@@ -142,3 +294,5 @@ class VaultRepositoryImpl(
         }
     }.getOrDefault(emptyMap())
 }
+
+private const val AUTOFILL_TAG = "Autofill"

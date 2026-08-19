@@ -1,5 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.BubuProtect" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/bubu_background</item>
+    </style>
 
-    <style name="Theme.BubuProtect" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <!--
+        The autofill activity's theme.
+
+        Translucent because most of its lifetimes are invisible: when the user taps a suggestion for
+        an entry, this activity starts, decrypts that one entry, hands back a dataset and finishes,
+        all inside a frame or two. An opaque window would flash the app over whatever the user was
+        looking at every single time they filled a field.
+
+        The screens that *are* visible - unlock, the picker, the save prompt - paint their own opaque
+        surface, so nothing shows through when there is something to show.
+    -->
+    <style name="Theme.BubuProtect.Autofill" parent="Theme.BubuProtect">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

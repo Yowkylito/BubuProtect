@@ -10,6 +10,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,8 +28,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.personal.bubuprotect.R
 import com.personal.bubuprotect.ui.motion.BubuMotion
+import com.personal.bubuprotect.ui.theme.BubuElevation
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import com.personal.bubuprotect.ui.theme.BubuSpacing
 import com.personal.bubuprotect.ui.theme.SecretTextStyle
+import com.personal.bubuprotect.ui.theme.bubu
 
 /**
  * One field of an open entry.
@@ -64,11 +68,20 @@ fun VaultFieldRow(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 0.dp
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp,
+        shadowElevation = BubuElevation.card,
+        border = BorderStroke(1.dp, MaterialTheme.bubu.cardBorder.copy(alpha = 0.72f))
     ) {
-        Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 6.dp, bottom = 12.dp)) {
+        Column(
+            Modifier.padding(
+                start = BubuSpacing.md,
+                top = BubuSpacing.sm,
+                end = BubuSpacing.xs,
+                bottom = BubuSpacing.md
+            )
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = label,
@@ -95,7 +108,9 @@ fun VaultFieldRow(
                             if (isRevealed) R.drawable.icon_show_password else R.drawable.icon_hide_password
                         ),
                         contentDescription = if (isRevealed) "Hide $label" else "Reveal $label",
-                        onClick = { if (isRevealed) onHide() else onReveal() }
+                        onClick = { if (isRevealed) onHide() else onReveal() },
+                        tonal = true,
+                        tint = MaterialTheme.bubu.champagne
                     )
                 }
 
@@ -103,7 +118,8 @@ fun VaultFieldRow(
                     BubuIconButton(
                         icon = ImageVector.vectorResource(R.drawable.ic_copy),
                         contentDescription = "Copy $label",
-                        onClick = onCopy
+                        onClick = onCopy,
+                        tonal = true
                     )
                 }
             }
@@ -125,7 +141,7 @@ fun VaultFieldRow(
                     style = if (isSecret) SecretTextStyle else MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = if (isMultiline) Int.MAX_VALUE else 3,
-                    modifier = Modifier.padding(end = 10.dp)
+                    modifier = Modifier.padding(end = BubuSpacing.sm)
                 )
             }
         }

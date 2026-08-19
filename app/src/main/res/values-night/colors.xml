@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bubu_background">#FF2A2B25</color>
+
+    <color name="autofill_surface">#FF23241F</color>
+    <color name="autofill_title">#FFE8E4D6</color>
+    <color name="autofill_subtitle">#FF9E9B8B</color>
+</resources>

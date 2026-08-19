@@ -1,3 +1,41 @@
 <resources>
     <string name="app_name">BubuProtect</string>
+
+    <!--
+        Autofill.
+
+        These are the only strings in the app that appear on top of *another* app's window, so they
+        say as little as possible about the vault. "Unlock Bubu Protect" over a bank login is already
+        a sentence about the user; "3 saved logins for chase.com" would be a great deal more.
+    -->
+    <string name="autofill_service_label">Bubu Protect</string>
+    <string name="autofill_service_summary">Fill saved logins and cards without copying them to the clipboard.</string>
+
+    <string name="autofill_unlock_title">Unlock Bubu Protect</string>
+    <string name="autofill_unlock_subtitle">Tap to sign in and fill</string>
+
+    <string name="autofill_browse_title">Search Bubu Protect</string>
+    <string name="autofill_browse_subtitle_more">Use a different saved entry</string>
+    <string name="autofill_browse_subtitle_none">Nothing saved for %1$s yet</string>
+
+    <string name="autofill_picker_title">Choose an entry</string>
+    <string name="autofill_picker_search">Search your vault</string>
+    <string name="autofill_picker_empty">Nothing here to fill</string>
+    <string name="autofill_picker_empty_body">Add a login to your vault first, then it will show up here.</string>
+    <string name="autofill_picker_link_note">Bubu will remember this choice for %1$s.</string>
+    <string name="autofill_cancel">Cancel</string>
+
+    <string name="autofill_save_title">Save to Bubu Protect?</string>
+    <string name="autofill_save_body">Store this login for %1$s so you can fill it next time.</string>
+    <string name="autofill_save_label_hint">Name</string>
+    <string name="autofill_save_confirm">Save</string>
+    <string name="autofill_save_discard">Not now</string>
+    <string name="autofill_save_done">Saved to your vault</string>
+
+    <string name="autofill_settings_title">Autofill</string>
+    <string name="autofill_settings_on">Bubu Protect fills your logins</string>
+    <string name="autofill_settings_off">Turn on to fill logins without the clipboard</string>
+    <string name="autofill_settings_unsupported">This phone does not offer autofill</string>
+    <string name="autofill_settings_action_enable">Turn on</string>
+    <string name="autofill_settings_action_manage">Manage</string>
 </resources>

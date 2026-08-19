@@ -1,11 +1,15 @@
 package com.personal.bubuprotect.ui.vm
 
 import android.content.Context
-import android.util.Log
+import android.net.Uri
 import androidx.biometric.BiometricPrompt
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.personal.bubuprotect.core.crypto.BiometricKeyInvalidatedException
+import com.personal.bubuprotect.core.backup.CorruptBackupException
+import com.personal.bubuprotect.core.backup.UnsupportedBackupVersionException
+import com.personal.bubuprotect.core.backup.VaultBackupService
+import com.personal.bubuprotect.core.backup.WrongBackupPassphraseException
 import com.personal.bubuprotect.core.crypto.PassphraseKdf
 import com.personal.bubuprotect.core.crypto.VaultKeyManager
 import com.personal.bubuprotect.core.crypto.WrongPassphraseException
@@ -17,6 +21,7 @@ import com.personal.bubuprotect.core.security.IntegrityChecker
 import com.personal.bubuprotect.core.security.LockoutTracker
 import com.personal.bubuprotect.session.VaultSession
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import kotlinx.coroutines.withContext
 
 enum class UnlockStage { CHECKING, SETUP, LOCKED }
@@ -71,6 +77,7 @@ class UnlockViewModel(
     private val session: VaultSession,
     private val lockout: LockoutTracker,
     private val biometrics: BiometricAuthenticator,
+    private val backupService: VaultBackupService,
     integrityChecker: IntegrityChecker,
     appContext: Context
 ) : ViewModel() {
@@ -130,13 +137,77 @@ class UnlockViewModel(
                 clearInput()
                 offerBiometricEnrollment(gate)
             } catch (failure: Throwable) {
-                Log.e(TAG, "Vault setup failed", failure)
+                Timber.tag(TAG).e(failure, "Vault setup failed")
                 // No class name in the message. R8 renames these types in release - the user would
                 // be told "Could not create the vault: u73" - and the throwable is already in the log
                 // above, so the diagnostic loses nothing.
                 fail("Bubu could not build the vault. Nothing was saved, so it is safe to try again.")
             } finally {
                 passphrase.wipe()
+                _state.update { it.copy(isBusy = false) }
+            }
+        }
+    }
+
+    /**
+     * Rebuilds a vault from an exported backup file.
+     *
+     * ### The order matters
+     *
+     * The file is decrypted *before* anything is enrolled. A wrong passphrase or a damaged file then
+     * costs nothing but a failed tag check - there is no half-built vault to clean up, and the user
+     * lands back on setup with their options intact. Enrolling first and discovering the file was
+     * unreadable afterwards would leave a real, empty vault sitting on top of the one they were
+     * trying to recover.
+     *
+     * ### The restored vault is a new vault
+     *
+     * [VaultKeyManager.enroll] mints a fresh MEK, fresh salts and a fresh database. The entries are
+     * re-sealed under those new keys, each one bound to its original id as AAD. Nothing from the
+     * backup file's own key hierarchy survives into the restored vault, which is why an old export
+     * leaking later does not compromise the vault it was restored into.
+     *
+     * @param passphrase the one that protected the backup. It becomes the new vault's passphrase
+     *   too, so there is one thing to remember rather than two; it can be changed afterwards.
+     */
+    fun restoreFromBackup(source: Uri, passphrase: String, gate: BiometricGate) {
+        if (_state.value.isBusy) return
+        if (passphrase.isEmpty()) {
+            fail("Enter the passphrase that protects this backup.")
+            return
+        }
+
+        viewModelScope.launch {
+            _state.update { it.copy(isBusy = true, message = null) }
+            val chars = passphrase.toCharArray()
+            try {
+                val decoded = backupService.read(source, chars)
+                if (decoded.entries.isEmpty()) {
+                    fail("That backup is readable but has nothing in it.")
+                    return@launch
+                }
+
+                val keys = withContext(Dispatchers.Default) { keyManager.enroll(chars) }
+                session.open(keys)
+                val restored = backupService.restoreInto(decoded.entries)
+                lockout.recordSuccess()
+                clearInput()
+                Timber.tag(TAG).i("Restored %d entries from a backup", restored)
+                offerBiometricEnrollment(gate)
+            } catch (wrong: WrongBackupPassphraseException) {
+                fail("That passphrase does not open this backup.")
+            } catch (unsupported: UnsupportedBackupVersionException) {
+                fail("This backup was made by a newer version of Bubu Protect. Update the app first.")
+            } catch (corrupt: CorruptBackupException) {
+                // Carries no attacker-influenced detail - the messages are all fixed strings.
+                fail(corrupt.message ?: "That backup could not be read.")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Timber.tag(TAG).e("Restore failed (%s)", failure::class.java.simpleName)
+                fail("Bubu could not restore that backup. Nothing was changed.")
+            } finally {
+                chars.wipe()
                 _state.update { it.copy(isBusy = false) }
             }
         }
@@ -166,7 +237,7 @@ class UnlockViewModel(
                 )
                 refreshLockout()
             } catch (failure: Throwable) {
-                Log.e(TAG, "Passphrase unlock failed", failure)
+                Timber.tag(TAG).e(failure, "Passphrase unlock failed")
                 fail("Bubu could not open the vault. Please try again.")
             } finally {
                 passphrase.wipe()
@@ -213,7 +284,7 @@ class UnlockViewModel(
                     )
                 }
             } catch (failure: Throwable) {
-                Log.e(TAG, "Biometric unlock failed", failure)
+                Timber.tag(TAG).e(failure, "Biometric unlock failed")
                 fail("Fingerprint unlock is not available right now. Use your master passphrase.")
             } finally {
                 _state.update { it.copy(isBusy = false) }
@@ -236,7 +307,7 @@ class UnlockViewModel(
             }
         }.onFailure {
             // Declining or failing here is not a setup failure - the vault is already open.
-            Log.i(TAG, "Biometric unlock not enabled: ${it.javaClass.simpleName}")
+            Timber.tag(TAG).i("Biometric unlock not enabled: %s", it.javaClass.simpleName)
         }
     }
 

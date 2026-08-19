@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
 import android.os.Bundle
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -56,7 +58,16 @@ class MainActivity : AppCompatActivity() {
 
         // Before any content exists, so there is no frame that could be captured unprotected.
         SecureWindow.harden(this)
-        enableEdgeToEdge()
+        // light/dark — not auto. auto() enables navigation-bar contrast enforcement, which
+        // paints a white plate over the gesture/3-button nav. Theme.ApplySystemBars keeps
+        // this in sync once Compose knows whether we are in night mode.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
 
         ContextCompat.registerReceiver(
             this,

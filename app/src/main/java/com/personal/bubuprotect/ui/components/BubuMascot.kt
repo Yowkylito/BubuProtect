@@ -10,7 +10,9 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -22,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -37,6 +40,7 @@ import com.personal.bubuprotect.ui.motion.breathe
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
 import com.personal.bubuprotect.ui.theme.bubu
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.clip
 
 /**
  * The single GIF-capable [ImageLoader] for the process.
@@ -68,7 +72,7 @@ fun rememberBubuImageLoader(): ImageLoader {
 @Immutable
 enum class BubuMood(@param:DrawableRes val art: Int, val description: String) {
     /** First run, and the empty vault. */
-    GREETING(R.drawable.welcome, "Bubu waving hello"),
+    GREETING(R.drawable.dont_forget_state, "Bubu waving hello"),
 
     /** The lock screen. Standing watch over the vault. */
     GUARDING(R.drawable.protect, "Bubu standing guard over the vault"),
@@ -77,7 +81,7 @@ enum class BubuMood(@param:DrawableRes val art: Int, val description: String) {
     HIDING(R.drawable.hide, "Bubu hiding a secret"),
 
     /** A wrong passphrase, a failed integrity check, an error. */
-    WORRIED(R.drawable.suspicious, "Bubu looking worried"),
+    WORRIED(R.drawable.breach_state, "Bubu looking worried"),
 
     /** A save landed, or the vault just opened. */
     CELEBRATING(R.drawable.success_gif, "Bubu celebrating"),
@@ -86,7 +90,17 @@ enum class BubuMood(@param:DrawableRes val art: Int, val description: String) {
     SULKING(R.drawable.delete, "Bubu looking sad"),
 
     /** Working. Key derivation, database open. */
-    THINKING(R.drawable.loading3, "Bubu thinking")
+    THINKING(R.drawable.loading3, "Bubu thinking"),
+
+    /**
+     * Something on the device is worth a second look, but nothing is on fire.
+     *
+     * Distinct from [WORRIED] on purpose. The device check finds a legitimate screen reader far more
+     * often than it finds an attacker, and leading that result with the same bear that means "your
+     * passphrase was wrong" would turn every normal phone into an emergency.
+     */
+    SUSPICIOUS(R.drawable.suspicious, "Bubu peering at something suspicious"),
+    EYES_COVERED(R.drawable.nothing_state, "Bubu covering eyes")
 }
 
 /**
@@ -132,7 +146,20 @@ fun BubuMascot(
             Box(
                 Modifier
                     .size(size)
-                    .background(backdrop, CircleShape)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.surfaceContainerLowest,
+                                backdrop
+                            )
+                        ),
+                        shape = CircleShape
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.bubu.champagne.copy(alpha = 0.38f),
+                        shape = CircleShape
+                    )
             )
         }
 
@@ -152,16 +179,20 @@ fun BubuMascot(
                 // Coil does not decode in the preview renderer; a plain disc keeps layout honest.
                 Box(
                     Modifier
-                        .size(size * 0.72f)
+                        .size(size * 1.72f)
                         .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
                 )
             } else {
                 Image(
+                    // Every mascot asset is a GIF. painterResource only supports static vector and
+                    // bitmap resources and crashes when focus used to switch this branch "off".
+                    // Coil's GIF decoder is therefore the single safe path for every mood.
                     painter = rememberAsyncImagePainter(current.art, imageLoader),
                     contentDescription = contentDescription,
-                    contentScale = ContentScale.Fit,
+                    contentScale = ContentScale.FillBounds,
                     modifier = Modifier
-                        .padding(size * 0.08f)
+                        .clip(CircleShape)
+                        .size(size)
                         .breathe(enabled = breathing)
                 )
             }

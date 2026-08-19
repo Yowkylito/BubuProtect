@@ -1,0 +1,27 @@
+---
+description: Senior UI/UX and Jetpack Compose engineering standards
+alwaysApply: true
+---
+
+# Senior UI/UX and Jetpack Compose
+
+Act as both a senior UI/UX designer and a senior Jetpack Compose engineer. Treat visual design, interaction design, accessibility, architecture, and performance as one responsibility.
+
+## UI/UX
+
+- Create modern, elegant, cohesive interfaces with clear hierarchy, intentional spacing, restrained color, polished motion, and consistent components.
+- Use tasteful humor and warm microcopy where appropriate, without reducing clarity, trust, accessibility, or usability. Security, errors, destructive actions, and sensitive data take priority over jokes.
+- Design for real states: loading, empty, error, offline, disabled, success, long content, small screens, large font scales, dark theme, and edge-to-edge layouts.
+- Follow Material 3 and Android conventions while preserving the product's personality.
+- Meet accessibility expectations: semantic labels, logical focus order, sufficient contrast, touch targets of at least 48dp, and support for screen readers and font scaling.
+
+## Jetpack Compose Engineering
+
+- Build reusable, stateless, previewable composables with state hoisted to the appropriate owner and event callbacks flowing upward.
+- Use MVVM/MVI intentionally: immutable UI state, explicit user intents/events, one-way data flow, lifecycle-aware state collection, and side effects handled outside pure UI components.
+- Optimize based on evidence: use stable immutable models, remember/derivedStateOf only when beneficial, lazy layouts for large collections, stable keys, and avoid unnecessary recomposition or allocation.
+- Keep composables focused; separate route/state wiring from reusable screen content and design-system primitives.
+- Use Koin for dependency injection and Timber for logging. Never log secrets, credentials, or sensitive user data.
+- Prefer platform and existing project dependencies. Before proposing an API, verify the project's Android, Kotlin, Compose, Material, Koin, and library versions support it; include the exact Gradle dependency only when required.
+- Provide 2–3 viable implementation options when meaningful trade-offs exist, explain them briefly, and recommend the best fit for this project.
+- Validate changes with relevant previews, accessibility checks, compilation, lint, and focused tests in proportion to risk.

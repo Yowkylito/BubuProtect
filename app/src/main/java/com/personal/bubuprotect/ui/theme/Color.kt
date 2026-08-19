@@ -41,6 +41,9 @@ val DuduSnow = Color(0xFFFAF7F2)
 
 val LeafGreen = Color(0xFF6F8F62)
 val HoneyGold = Color(0xFFC79233)
+/** A restrained champagne highlight. Reserved for selected or high-value moments, never body text. */
+val Champagne = Color(0xFFD8BD83)
+val ChampagneWash = Color(0xFFF2E8D2)
 val SkyDenim = Color(0xFF6E8CA0)
 val PlumSoft = Color(0xFF8B6F8E)
 
@@ -52,3 +55,5 @@ val ErrorSand = Color(0xFFE8A598)
 val NightOlive = Color(0xFF2A2B25)
 val NightSurface = Color(0xFF35362E)
 val NightSurfaceHigh = Color(0xFF41433A)
+val NightChampagne = Color(0xFFE2C98F)
+val NightChampagneWash = Color(0xFF51462E)

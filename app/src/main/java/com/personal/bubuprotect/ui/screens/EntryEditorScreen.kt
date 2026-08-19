@@ -11,6 +11,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,25 +35,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -63,15 +67,20 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.personal.bubuprotect.R
+import com.personal.bubuprotect.core.nfc.NfcCardScanner
 import com.personal.bubuprotect.domain.model.FieldSlot
 import com.personal.bubuprotect.domain.model.FieldSpec
 import com.personal.bubuprotect.domain.model.ItemKind
+import com.personal.bubuprotect.domain.model.ScannedCard
 import com.personal.bubuprotect.ui.components.BubuButton
 import com.personal.bubuprotect.ui.components.BubuIconButton
 import com.personal.bubuprotect.ui.components.BubuMascot
 import com.personal.bubuprotect.ui.components.BubuMood
+import com.personal.bubuprotect.ui.components.BubuTopBar
 import com.personal.bubuprotect.ui.components.ErrorPane
 import com.personal.bubuprotect.ui.components.LoadingPane
+import com.personal.bubuprotect.ui.components.NfcCardScanSheet
+import com.personal.bubuprotect.ui.components.ResponsiveContainer
 import com.personal.bubuprotect.ui.components.SecretStrengthMeter
 import com.personal.bubuprotect.ui.components.VaultTextField
 import com.personal.bubuprotect.ui.components.accent
@@ -80,10 +89,15 @@ import com.personal.bubuprotect.ui.motion.BubuMotion
 import com.personal.bubuprotect.ui.motion.enterStaggered
 import com.personal.bubuprotect.ui.motion.squish
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import com.personal.bubuprotect.ui.theme.BubuElevation
+import com.personal.bubuprotect.ui.theme.BubuSpacing
+import com.personal.bubuprotect.ui.theme.bubu
 import com.personal.bubuprotect.ui.vm.EntryEditorUiState
 import com.personal.bubuprotect.ui.vm.EntryEditorViewModel
+import com.personal.bubuprotect.ui.vm.rememberBiometricGate
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
 /**
@@ -98,18 +112,32 @@ fun EntryEditorRoute(
     onDiscard: () -> Unit,
     onSaved: () -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: EntryEditorViewModel = koinViewModel { parametersOf(entryId) }
+    viewModel: EntryEditorViewModel = koinViewModel { parametersOf(entryId) },
+    scanner: NfcCardScanner = koinInject()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val gate = rememberBiometricGate()
+
+    // Asked once, here rather than inside the screen, so [EntryEditorScreen] stays previewable -
+    // a Koin lookup in the screen body would take every @Preview in this file down with it.
+    val isNfcAvailable = remember(context) { scanner.isSupported(context) }
 
     EntryEditorScreen(
         state = state,
         onLabelChange = viewModel::onLabelChange,
         onKindChange = viewModel::onKindChange,
         onFieldChange = viewModel::onFieldChange,
-        onToggleReveal = viewModel::toggleReveal,
+        onToggleReveal = { slot ->
+            state.fields.firstOrNull { it.slot == slot }?.let { spec ->
+                viewModel.requestReveal(spec, gate)
+            }
+        },
         onGenerate = { viewModel.generateSecret() },
+        onCardScanned = viewModel::onCardScanned,
+        isNfcAvailable = isNfcAvailable,
         onSave = viewModel::save,
+        onRetry = viewModel::retryLoad,
         onClose = onDiscard,
         onSaveAnimationFinished = onSaved,
         modifier = modifier
@@ -123,7 +151,6 @@ fun EntryEditorRoute(
  * [ItemKind] - so this file contains no reference to a CVV or an SSID, and a new kind appears here
  * with no change at all.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EntryEditorScreen(
     state: EntryEditorUiState,
@@ -133,53 +160,67 @@ fun EntryEditorScreen(
     onToggleReveal: (FieldSlot) -> Unit,
     onGenerate: () -> Unit,
     onSave: () -> Unit,
+    onRetry: () -> Unit = {},
     onClose: () -> Unit,
     onSaveAnimationFinished: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCardScanned: (ScannedCard) -> Unit = {},
+    /**
+     * Whether this phone has an NFC controller at all. Defaulted off so previews - which have no
+     * Koin graph to ask - render the form exactly as a non-NFC device would.
+     */
+    isNfcAvailable: Boolean = false
 ) {
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (state.isNewEntry) "Something new" else "Edit",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                },
-                navigationIcon = {
-                    BubuIconButton(
-                        icon = Icons.Filled.Close,
-                        contentDescription = "Discard and go back",
-                        onClick = onClose
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+    // Purely presentational, so it stays here rather than in the ViewModel: nothing about a sheet
+    // being open survives a process death worth restoring, and routing it through state would make
+    // the editor's state class describe its own UI.
+    var isScanning by remember { mutableStateOf(false) }
+
+    Column(modifier.fillMaxSize()) {
+        BubuTopBar(
+            title = if (state.isNewEntry) "A new secret" else "Refine this secret",
+            subtitle = "${state.kind.title} · Sealed on this device",
+            leading = {
+                BubuIconButton(
+                    icon = Icons.Filled.Close,
+                    contentDescription = "Discard and go back",
+                    onClick = onClose,
+                    tonal = true
                 )
-            )
-        }
-    ) { innerPadding ->
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
         Box(
             Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+                .weight(1f)
+                .fillMaxWidth()
+                .imePadding()
         ) {
             when {
                 state.isLoading -> LoadingPane(label = "Unsealing")
 
-                state.loadError != null -> ErrorPane(message = state.loadError)
+                state.loadError != null -> ErrorPane(message = state.loadError, onRetry = onRetry)
 
-                else -> EditorForm(
-                    state = state,
-                    onLabelChange = onLabelChange,
-                    onKindChange = onKindChange,
-                    onFieldChange = onFieldChange,
-                    onToggleReveal = onToggleReveal,
-                    onGenerate = onGenerate,
-                    onSave = onSave
-                )
+                else -> ResponsiveContainer(Modifier.fillMaxSize()) {
+                    EditorForm(
+                        state = state,
+                        onLabelChange = onLabelChange,
+                        onKindChange = onKindChange,
+                        onFieldChange = onFieldChange,
+                        onToggleReveal = onToggleReveal,
+                        onGenerate = onGenerate,
+                        canScanCard = state.canScanCard && isNfcAvailable,
+                        onScanCard = { isScanning = true },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SaveDock(
+                        isNewEntry = state.isNewEntry,
+                        saveError = state.saveError,
+                        enabled = state.isSubmitEnabled,
+                        isBusy = state.isSaving,
+                        onSave = onSave
+                    )
+                }
             }
 
             // The celebration is the confirmation. It covers the form so the user cannot double-save
@@ -189,6 +230,14 @@ fun EntryEditorScreen(
                 onFinished = onSaveAnimationFinished
             )
         }
+    }
+
+    // Composed only while open, which is also what scopes NFC reader mode to the sheet's lifetime.
+    if (isScanning) {
+        NfcCardScanSheet(
+            onScanned = onCardScanned,
+            onDismiss = { isScanning = false }
+        )
     }
 }
 
@@ -200,15 +249,17 @@ private fun EditorForm(
     onFieldChange: (FieldSlot, String) -> Unit,
     onToggleReveal: (FieldSlot) -> Unit,
     onGenerate: () -> Unit,
-    onSave: () -> Unit,
+    canScanCard: Boolean,
+    onScanCard: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .imePadding(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            top = BubuSpacing.xs,
+            bottom = BubuSpacing.lg
+        ),
+        verticalArrangement = Arrangement.spacedBy(BubuSpacing.sm)
     ) {
         if (state.canChangeKind) {
             item(key = "kinds") {
@@ -223,12 +274,13 @@ private fun EditorForm(
                 label = "What is this?",
                 errorText = state.labelError,
                 supportingText = "The only part Bubu shows without asking for your fingerprint",
-                imeAction = ImeAction.Next
+                imeAction = ImeAction.Next,
+                modifier = Modifier.padding(horizontal = BubuSpacing.screen)
             )
         }
 
         itemsIndexed(state.fields, key = { _, spec -> spec.label }) { index, spec ->
-            Column(modifier = Modifier.enterStaggered(index)) {
+            Column(modifier = Modifier.enterStaggered(index).padding(horizontal = BubuSpacing.screen)) {
                 VaultTextField(
                     value = state.valueOf(spec),
                     onValueChange = { onFieldChange(spec.slot, it) },
@@ -245,10 +297,18 @@ private fun EditorForm(
                     errorText = state.errorFor(spec),
                     supportingText = spec.hint?.let { "e.g. $it" },
                     imeAction = if (index == state.fields.lastIndex) ImeAction.Done else ImeAction.Next,
-                    trailingSlot = if (spec.slot == FieldSlot.Secret && state.canGenerateSecret) {
-                        { GenerateButton(onGenerate) }
-                    } else {
-                        null
+                    // The primary secret gets whichever shortcut its kind has - a generator for a
+                    // password, a card reader for a card number. Never both: no kind has both, and
+                    // two icons in one field would crowd out the reveal toggle beside them.
+                    trailingSlot = when {
+                        spec.slot != FieldSlot.Secret -> null
+                        state.canGenerateSecret -> {
+                            { GenerateButton(onGenerate) }
+                        }
+                        canScanCard -> {
+                            { ScanCardButton(onScanCard) }
+                        }
+                        else -> null
                     }
                 )
 
@@ -263,37 +323,54 @@ private fun EditorForm(
                 ) {
                     SecretStrengthMeter(
                         secret = state.valueOf(spec),
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                        modifier = Modifier.padding(horizontal = BubuSpacing.screen+4.dp, vertical = 8.dp)
                     )
                 }
             }
         }
+    }
+}
 
-        item(key = "save") {
-            Spacer(Modifier.height(8.dp))
+@Composable
+private fun SaveDock(
+    isNewEntry: Boolean,
+    saveError: String?,
+    enabled: Boolean,
+    isBusy: Boolean,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background,
+        shadowElevation = BubuElevation.floating,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = BubuSpacing.screen, vertical = BubuSpacing.sm)
+        ) {
             AnimatedVisibility(
-                visible = state.saveError != null,
+                visible = saveError != null,
                 enter = fadeIn(tween(BubuMotion.FAST)) + expandVertically(tween(BubuMotion.FAST)),
                 exit = fadeOut(tween(BubuMotion.FAST)) + shrinkVertically(tween(BubuMotion.FAST))
             ) {
                 Text(
-                    text = state.saveError.orEmpty(),
+                    text = saveError.orEmpty(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = BubuSpacing.xs)
                 )
             }
             BubuButton(
-                text = if (state.isNewEntry) "Give it to Bubu" else "Save changes",
+                text = if (isNewEntry) "Give it to Bubu" else "Save changes",
                 onClick = onSave,
-                enabled = state.isSubmitEnabled,
-                isBusy = state.isSaving,
+                enabled = enabled,
+                isBusy = isBusy,
                 busyText = "Sealing",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
+                modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -317,22 +394,26 @@ private fun KindPicker(
             text = "What kind of secret?",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp)
+            modifier = Modifier.padding(bottom = BubuSpacing.xs)
+                .padding(horizontal = BubuSpacing.screen)
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = BubuSpacing.sm)) {
             items(kinds, key = { it.storageKey }) { kind ->
                 KindCard(
                     kind = kind,
                     isSelected = kind == selected,
                     onClick = { onSelect(kind) }
                 )
+                Spacer(Modifier.width(BubuSpacing.sm))
             }
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(BubuSpacing.xs))
         Text(
             text = selected.tagline,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier= Modifier.padding(horizontal = BubuSpacing.screen)
         )
     }
 }
@@ -348,7 +429,7 @@ private fun KindCard(
     val interactionSource = remember { MutableInteractionSource() }
 
     val container by animateColorAsState(
-        targetValue = if (isSelected) accent.container else MaterialTheme.colorScheme.surfaceContainer,
+        targetValue = if (isSelected) accent.container else MaterialTheme.colorScheme.surfaceContainerLow,
         animationSpec = tween(BubuMotion.MEDIUM),
         label = "kindContainer"
     )
@@ -370,8 +451,21 @@ private fun KindCard(
                 scaleX = lift.value
                 scaleY = lift.value
             }
+            .shadow(
+                elevation = if (isSelected) BubuElevation.hero else BubuElevation.card,
+                shape = MaterialTheme.shapes.large
+            )
             .clip(MaterialTheme.shapes.large)
             .background(container)
+            .border(
+                width = 1.dp,
+                color = if (isSelected) {
+                    accent.content.copy(alpha = 0.35f)
+                } else {
+                    MaterialTheme.bubu.cardBorder.copy(alpha = 0.68f)
+                },
+                shape = MaterialTheme.shapes.large
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -406,14 +500,27 @@ private fun KindCard(
 }
 
 @Composable
+private fun ScanCardButton(onScan: () -> Unit) {
+    BubuIconButton(
+        icon = ImageVector.vectorResource(R.drawable.ic_nfc),
+        // Says what it reads and what it cannot, because a user who expects the CVV to arrive with
+        // it will read the blank field as a broken scan.
+        contentDescription = "Tap your card to fill in its number and expiry",
+        onClick = onScan,
+        tonal = true,
+        tint = MaterialTheme.bubu.champagne
+    )
+}
+
+@Composable
 private fun GenerateButton(onGenerate: () -> Unit) {
-    IconButton(onClick = onGenerate) {
-        Icon(
-            imageVector = ImageVector.vectorResource(R.drawable.ic_dice),
-            contentDescription = "Let Bubu invent a strong password",
-            tint = MaterialTheme.colorScheme.secondary
-        )
-    }
+    BubuIconButton(
+        icon = ImageVector.vectorResource(R.drawable.ic_dice),
+        contentDescription = "Let Bubu invent a strong password",
+        onClick = onGenerate,
+        tonal = true,
+        tint = MaterialTheme.bubu.champagne
+    )
 }
 
 /**
@@ -429,8 +536,10 @@ private fun SaveCelebration(
     onFinished: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = LocalHapticFeedback.current
     LaunchedEffect(visible) {
         if (visible) {
+            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
             delay(CELEBRATION_MILLIS)
             onFinished()
         }
@@ -447,16 +556,31 @@ private fun SaveCelebration(
             color = MaterialTheme.colorScheme.background
         ) {
             Column(
-                Modifier.fillMaxSize(),
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                MaterialTheme.bubu.champagneContainer.copy(alpha = 0.72f),
+                                MaterialTheme.colorScheme.background
+                            )
+                        )
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 BubuMascot(mood = BubuMood.CELEBRATING, size = 170.dp, contentDescription = null)
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(BubuSpacing.md))
                 Text(
                     text = "Sealed and safe",
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(BubuSpacing.xxs))
+                Text(
+                    text = "Bubu and Dudu have it now",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -466,6 +590,8 @@ private fun SaveCelebration(
 private const val CELEBRATION_MILLIS = 900L
 
 @Preview(showBackground = true, name = "New login")
+@Preview(showBackground = true, name = "New login · dark", uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES)
+@Preview(showBackground = true, name = "New login · large text", fontScale = 1.3f)
 @Composable
 private fun EntryEditorNewPreview() {
     BubuProtectTheme {
@@ -493,7 +619,8 @@ private fun EntryEditorNewPreview() {
     }
 }
 
-@Preview(showBackground = true, name = "New card")
+/** With NFC present, so the card-number row shows its scan action. */
+@Preview(showBackground = true, name = "New card · NFC phone")
 @Composable
 private fun EntryEditorCardPreview() {
     BubuProtectTheme {
@@ -503,6 +630,33 @@ private fun EntryEditorCardPreview() {
                 isNewEntry = true,
                 kind = ItemKind.CARD,
                 label = ""
+            ),
+            onLabelChange = {},
+            onKindChange = {},
+            onFieldChange = { _, _ -> },
+            onToggleReveal = {},
+            onGenerate = {},
+            onSave = {},
+            onClose = {},
+            onSaveAnimationFinished = {},
+            isNfcAvailable = true
+        )
+    }
+}
+
+/** The same form on a phone with no NFC: no scan action, no dead affordance. */
+@Preview(showBackground = true, name = "New card · no NFC")
+@Composable
+private fun EntryEditorCardNoNfcPreview() {
+    BubuProtectTheme {
+        EntryEditorScreen(
+            state = EntryEditorUiState(
+                isLoading = false,
+                isNewEntry = true,
+                kind = ItemKind.CARD,
+                label = "Travel card",
+                values = mapOf(FieldSlot.Secret to "4242424242424242"),
+                revealedSlots = setOf(FieldSlot.Secret)
             ),
             onLabelChange = {},
             onKindChange = {},

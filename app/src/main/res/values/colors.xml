@@ -7,4 +7,18 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="bubu_background">#FFF3EFE4</color>
+
+    <!--
+        The autofill suggestion row.
+
+        Its RemoteViews are inflated from this package but drawn by the system UI process, so the
+        colours have to be concrete values rather than `?attr` references - a theme attribute would
+        resolve against whatever theme the host happens to be using and can come out unreadable.
+        The night variants live in values-night/colors.xml and are picked up because resource
+        resolution still runs against the device configuration.
+    -->
+    <color name="autofill_surface">#FFF7F4EC</color>
+    <color name="autofill_title">#FF1C1B16</color>
+    <color name="autofill_subtitle">#FF6B6858</color>
 </resources>

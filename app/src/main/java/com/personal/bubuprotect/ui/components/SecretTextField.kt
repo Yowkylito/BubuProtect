@@ -2,25 +2,27 @@ package com.personal.bubuprotect.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
@@ -33,8 +35,10 @@ import androidx.compose.ui.unit.dp
 import com.personal.bubuprotect.R
 import com.personal.bubuprotect.domain.model.FieldKeyboard
 import com.personal.bubuprotect.ui.motion.BubuMotion
+import com.personal.bubuprotect.ui.theme.BubuSpacing
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
-import com.personal.bubuprotect.ui.theme.SecretMono
+import com.personal.bubuprotect.ui.theme.SecretTextStyle
+import com.personal.bubuprotect.ui.theme.bubu
 
 /**
  * Every text input in the app.
@@ -69,11 +73,13 @@ fun VaultTextField(
     errorText: String? = null,
     imeAction: ImeAction = ImeAction.Next,
     enabled: Boolean = true,
+    onFocusStateChange: (Boolean) -> Unit = {},
     trailingSlot: (@Composable () -> Unit)? = null
 ) {
     // A multi-line secret is never masked while editing: you cannot proof-read a note you cannot
     // see, and opening the editor already cost an authentication.
     val masked = isSecret && !isVisible && !isMultiline
+    val focusManager = LocalFocusManager.current
 
     Column(modifier = modifier) {
         OutlinedTextField(
@@ -82,6 +88,7 @@ fun VaultTextField(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (isMultiline) Modifier.heightIn(min = 120.dp) else Modifier)
+                .onFocusChanged { onFocusStateChange(it.isFocused) }
                 // Announces the field's purpose even when the label has floated out of view.
                 .semantics {
                     contentDescription = label
@@ -96,9 +103,19 @@ fun VaultTextField(
             minLines = if (isMultiline) 4 else 1,
             enabled = enabled,
             isError = errorText != null,
-            shape = MaterialTheme.shapes.medium,
+            shape = MaterialTheme.shapes.large,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
+                errorContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                unfocusedBorderColor = MaterialTheme.bubu.cardBorder,
+                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f),
+                disabledBorderColor = Color.Transparent,
+                errorBorderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+            ),
             textStyle = if (isSecret && !isMultiline) {
-                MaterialTheme.typography.bodyLarge.copy(fontFamily = SecretMono)
+                SecretTextStyle
             } else {
                 MaterialTheme.typography.bodyLarge
             },
@@ -112,24 +129,28 @@ fun VaultTextField(
                 autoCorrectEnabled = !isSecret,
                 imeAction = if (isMultiline) ImeAction.Default else imeAction
             ),
+            keyboardActions = KeyboardActions(
+                onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                onDone = { focusManager.clearFocus() }
+            ),
             trailingIcon = when {
                 trailingSlot != null || onVisibilityToggle != null -> {
                     {
                         Row {
                             trailingSlot?.invoke()
                             if (onVisibilityToggle != null && !isMultiline) {
-                                IconButton(onClick = onVisibilityToggle) {
-                                    Icon(
-                                        imageVector = ImageVector.vectorResource(
-                                            if (isVisible) {
-                                                R.drawable.icon_show_password
-                                            } else {
-                                                R.drawable.icon_hide_password
-                                            }
-                                        ),
-                                        contentDescription = if (isVisible) "Hide $label" else "Show $label"
-                                    )
-                                }
+                                BubuIconButton(
+                                    icon = ImageVector.vectorResource(
+                                        if (isVisible) {
+                                            R.drawable.icon_show_password
+                                        } else {
+                                            R.drawable.icon_hide_password
+                                        }
+                                    ),
+                                    contentDescription = if (isVisible) "Hide $label" else "Show $label",
+                                    onClick = onVisibilityToggle,
+                                    tonal = true
+                                )
                             }
                         }
                     }
@@ -144,8 +165,8 @@ fun VaultTextField(
         // that instantly makes the user's thumb land on the wrong control.
         AnimatedVisibility(
             visible = errorText != null || supportingText != null,
-            enter = fadeIn(tween(BubuMotion.FAST)) + expandVertically(tween(BubuMotion.FAST)),
-            exit = fadeOut(tween(BubuMotion.FAST)) + shrinkVertically(tween(BubuMotion.FAST))
+            enter = fadeIn(tween(BubuMotion.FAST)),
+            exit = fadeOut(tween(BubuMotion.FAST))
         ) {
             Text(
                 text = errorText ?: supportingText.orEmpty(),
@@ -155,7 +176,11 @@ fun VaultTextField(
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp)
+                modifier = Modifier.padding(
+                    start = BubuSpacing.md,
+                    top = BubuSpacing.xxs,
+                    end = BubuSpacing.md
+                )
             )
         }
     }
@@ -173,7 +198,8 @@ fun SecretTextField(
     supportingText: String? = null,
     errorText: String? = null,
     imeAction: ImeAction = ImeAction.Next,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    onFocusStateChange: (Boolean) -> Unit = {}
 ) = VaultTextField(
     value = value,
     onValueChange = onValueChange,
@@ -185,7 +211,8 @@ fun SecretTextField(
     supportingText = supportingText,
     errorText = errorText,
     imeAction = imeAction,
-    enabled = enabled
+    enabled = enabled,
+    onFocusStateChange = onFocusStateChange
 )
 
 private fun FieldKeyboard.toKeyboardType(isSecret: Boolean): KeyboardType = when {
@@ -199,6 +226,7 @@ private fun FieldKeyboard.toKeyboardType(isSecret: Boolean): KeyboardType = when
 }
 
 @Preview(name = "Masked", showBackground = true)
+@Preview(name = "Masked · dark", showBackground = true, uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun SecretTextFieldMaskedPreview() {
     BubuProtectTheme {

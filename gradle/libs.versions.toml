@@ -19,6 +19,8 @@ coilCompose = "2.7.0"
 navigationCompose = "2.9.7"
 room = "2.8.4"
 sqlcipher = "4.17.0"
+timber = "5.0.1"
+bouncycastle = "1.80"
 
 [libraries]
 androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
@@ -51,6 +53,8 @@ androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
+timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
+bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -1,7 +1,6 @@
 package com.personal.bubuprotect.data.local
 
 import android.content.Context
-import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -9,16 +8,18 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.personal.bubuprotect.core.crypto.SecureBytes
 import net.zetetic.database.sqlcipher.SQLiteConnection
+import timber.log.Timber
 import net.zetetic.database.sqlcipher.SQLiteDatabaseHook
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
-    entities = [PasswordEntity::class],
-    version = 2,
+    entities = [PasswordEntity::class, AutofillLinkEntity::class],
+    version = 4,
     exportSchema = false
 )
 abstract class VaultDatabase : RoomDatabase() {
     abstract fun passwordDao(): PasswordDao
+    abstract fun autofillLinkDao(): AutofillLinkDao
 }
 
 /**
@@ -34,6 +35,65 @@ internal val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("ALTER TABLE password_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'login'")
         db.execSQL("ALTER TABLE password_entries ADD COLUMN extras_cipher BLOB")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_password_entries_kind ON password_entries (kind)")
+    }
+}
+
+/**
+ * v2 -> v3: breach verdicts became persistent.
+ *
+ * Additive again, and every default is the "we have never looked" state, so the migration makes no
+ * claim about any existing password. A default of 0 on `breach_count` would have been read as
+ * "checked, and clean" and would have quietly told the user their entire vault was verified safe
+ * without a single lookup having run - which is why the sentinel is -1 rather than 0.
+ */
+internal val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE password_entries ADD COLUMN secret_updated_at INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE password_entries ADD COLUMN breach_count INTEGER NOT NULL DEFAULT -1")
+        db.execSQL("ALTER TABLE password_entries ADD COLUMN breach_checked_at INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE password_entries ADD COLUMN breach_ack_at INTEGER NOT NULL DEFAULT 0")
+        // Existing rows have no separate record of when their secret last moved, and the most
+        // truthful thing available is the row's own write stamp. A literal 0 would have been the
+        // other option and is worse: it claims every pre-existing password was last touched at the
+        // epoch, which would make the first verdict for each look valid forever.
+        db.execSQL("UPDATE password_entries SET secret_updated_at = updated_at")
+    }
+}
+
+/**
+ * v3 -> v4: autofill learned which entry belongs to which app.
+ *
+ * A new table rather than a column, and additive like the two before it - `password_entries` is not
+ * touched, so no ciphertext is copied through a temp table where a crash could strand it.
+ *
+ * The statements are written out by hand rather than generated, so they have to match what Room
+ * expects byte for byte: Room re-derives the schema at open time and refuses a database whose shape
+ * disagrees with the annotations. The `FOREIGN KEY` clause and the index name are both part of that
+ * comparison, which is why they appear here in Room's own spelling rather than a tidier one.
+ *
+ * Existing vaults get an empty table, which is the correct starting state: no link has been earned
+ * yet, and inventing links from the `website` column would be asserting a trust decision the user
+ * never made.
+ */
+internal val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `autofill_links` (
+                `target_key` TEXT NOT NULL,
+                `entry_id` TEXT NOT NULL,
+                `signature` TEXT,
+                `linked_at` INTEGER NOT NULL,
+                PRIMARY KEY(`target_key`, `entry_id`),
+                FOREIGN KEY(`entry_id`) REFERENCES `password_entries`(`id`)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_autofill_links_entry_id` " +
+                "ON `autofill_links` (`entry_id`)"
+        )
     }
 }
 
@@ -65,7 +125,7 @@ class EncryptedDatabaseFactory(private val context: Context) {
 
         return Room.databaseBuilder(context, VaultDatabase::class.java, DATABASE_NAME)
             .openHelperFactory(factory)
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             // No fallbackToDestructiveMigration: silently dropping the table on a schema mismatch
             // would erase every password the user owns. A migration failure must be loud.
             .build()
@@ -111,7 +171,7 @@ class EncryptedDatabaseFactory(private val context: Context) {
             if (enabled != 1L) {
                 // Worth knowing rather than assuming: if this ever silently failed to take, deleted
                 // ciphertext would linger in the file's free pages.
-                Log.w(TAG, "secure_delete did not take effect (reported $enabled)")
+                Timber.tag(TAG).w("secure_delete did not take effect (reported %s)", enabled)
             }
             connection.execute("PRAGMA temp_store = MEMORY;", emptyArray(), null)
         }

@@ -21,6 +21,31 @@ sealed interface Routes {
     data object Vault : Routes
 
     @Serializable
+    data object SecurityGuide : Routes
+
+    /**
+     * The breach report.
+     *
+     * Carries no arguments on purpose. The screen reads the whole vault list from the shared
+     * [com.personal.bubuprotect.ui.vm.VaultViewModel], so a list of breached entry ids never ends up
+     * in a navigation `Bundle` that the system may write to disk on process death - which is the same
+     * reason [Detail] carries only a UUID.
+     */
+    @Serializable
+    data object BreachReport : Routes
+
+    /**
+     * The device check.
+     *
+     * Argument-free for the same reason as [BreachReport], and one more: its findings name other apps
+     * on the phone, and a list of those in a navigation `Bundle` is a list the system may write to
+     * disk on process death. The report is re-derived on arrival instead - it costs a few
+     * milliseconds, and a device finding is only meaningful as of *now* anyway.
+     */
+    @Serializable
+    data object DeviceCheck : Routes
+
+    @Serializable
     data class Detail(val entryId: String) : Routes
 
     /** A null [entryId] opens the editor in create mode. */
