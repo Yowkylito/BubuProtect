@@ -1,0 +1,53 @@
+# Hostnames the local DNS filter answers with NXDOMAIN, and counts against the app that asked.
+#
+# One host per line, '#' for comments. A leading '.' is not needed: matching is
+# suffix-based, so "doubleclick.net" also covers "stats.g.doubleclick.net".
+#
+# Scope, because this list is doing two different jobs and only one of them is blocking:
+#
+#   - ATTRIBUTION. Every hit is recorded against the UID that asked, which is what turns "an ad
+#     appeared" into "this app made 1,847 requests to 12 ad networks in the last hour". This works
+#     whether or not the answer is blocked, and it is the more valuable half.
+#   - BLOCKING. Only applied to apps the user has convicted. A device-wide block would break
+#     legitimate free apps whose only revenue is the ad they were about to show, and this app has no
+#     business making that decision on the user's behalf.
+#
+# Deliberately conservative. These are mobile ad-mediation and attribution networks, not a general
+# tracker list - a maximal blocklist is somebody else's product and it breaks things.
+doubleclick.net
+googleadservices.com
+googlesyndication.com
+adservice.google.com
+applovin.com
+applvn.com
+unityads.unity3d.com
+unityads.unitychina3d.com
+adcolony.com
+adc3-launch.adcolony.com
+vungle.com
+api.vungle.com
+chartboost.com
+live.chartboost.com
+ironsrc.mobi
+ironsource.mobi
+supersonicads.com
+inmobi.com
+inmobicdn.net
+mopub.com
+tapjoy.com
+tapjoyads.com
+startappservice.com
+startappexchange.com
+mobfox.com
+appnext.com
+adtapsy.com
+mintegral.com
+rayjump.com
+pangle.io
+pangleglobal.com
+bytedance.com.ads
+adjust.com
+appsflyer.com
+kochava.com
+branch.io
+amplitude.com

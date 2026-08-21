@@ -1,0 +1,20 @@
+# Signing certificates of known adware families.
+#
+# One SHA-256 per line. Colon-separated, space-separated and bare hex are all accepted; case does not
+# matter. Everything after a '#' is ignored.
+#
+# THIS FILE SHIPS EMPTY, ON PURPOSE.
+#
+# An entry here convicts an app on its own, with no behavioural evidence required - that is the point
+# of it, and it is why an unverified entry is worse than no entry. Nothing goes in here that has not
+# been confirmed against an actual sample. Guessing would turn the one signal in this design that is
+# an identity rather than an inference back into an inference.
+#
+# The shield works without this file. An unlisted family is caught the first time it draws an overlay,
+# and every sibling sharing its key is caught by SIGNER_SIBLING with no list involved. The blocklist
+# only makes the first catch instant.
+#
+# To add one:
+#   1. Confirm the app is adware - a recorded overlay or attributed ad traffic, not a permission list.
+#   2. Read its certificate: SignerFingerprinter.fingerprint(packageManager, packageName)
+#   3. Paste the hash below with a comment naming the sample it came from.

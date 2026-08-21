@@ -88,6 +88,24 @@ val ItemKind.fields: List<FieldSpec>
             FieldSpec(FieldSlot.Identity, "Username or email", keyboard = FieldKeyboard.EMAIL),
             FieldSpec(FieldSlot.Secret, "Password", isSecret = true, isRequired = true),
             FieldSpec(FieldSlot.Website, "Website", keyboard = FieldKeyboard.URI, hint = "bubu.example.com"),
+            /*
+             * The 2FA seed.
+             *
+             * An Extra slot, so it lands in the existing encrypted extras blob with no schema
+             * migration - exactly the seam described on [FieldSlot]. It is a secret in every sense
+             * that matters: the seed generates every future code, so it is worth strictly more than
+             * any single code and is masked and gated like a password.
+             *
+             * The *editor* shows this row so a seed can be pasted or corrected. The *detail* screen
+             * hides it and renders a live code instead - see TOTP_EXTRA_KEY for why the raw value has
+             * no business being on that screen.
+             */
+            FieldSpec(
+                FieldSlot.Extra(TOTP_EXTRA_KEY),
+                "2FA secret",
+                isSecret = true,
+                hint = "otpauth://... or the secret key"
+            ),
             FieldSpec(FieldSlot.Notes, "Notes", isMultiline = true)
         )
 
@@ -134,6 +152,61 @@ val ItemKind.fields: List<FieldSpec>
             FieldSpec(FieldSlot.Notes, "Notes", isMultiline = true)
         )
     }
+
+/**
+ * Where a 2FA seed lives inside an entry's extras.
+ *
+ * A persisted key, so it must never be renamed - see [FieldSlot.Extra]. Referenced from the detail
+ * screen, the autofill responder and the import sweep, which is precisely why it is one constant
+ * rather than the string `"totp"` written in four places.
+ */
+const val TOTP_EXTRA_KEY = "totp"
+
+/** Whether this kind can carry a 2FA seed at all. */
+val ItemKind.supportsTotp: Boolean
+    get() = this == ItemKind.LOGIN
+
+/**
+ * The seed's raw stored value, or null. Never render this - render a code from it.
+ *
+ * ### Why it also looks in the notes
+ *
+ * Import landed before this field existed, and it parked seeds in the entry's notes under a marker
+ * rather than dropping them - see `CredentialImporter`. Reading that fallback here means every entry
+ * imported before today starts generating codes immediately, with **no migration**: nothing has to be
+ * rewritten, no one-time sweep has to be triggered at the right moment, and a vault that never runs
+ * the sweep is never left half-converted.
+ *
+ * A read-time fallback is strictly safer than a write-time migration for this. The migration would
+ * have to rewrite every affected row - re-encrypting fields and touching `updated_at` - to move a
+ * string the app can simply find where it already is.
+ */
+fun VaultEntry.totpSource(): String? {
+    if (!kind.supportsTotp) return null
+    extras[TOTP_EXTRA_KEY]?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+    return notes?.let(::seedFromNotes)
+}
+
+/**
+ * Pulls a seed out of the line an old import wrote.
+ *
+ * Matched on the marker rather than on "any line containing otpauth://", so a note in which the user
+ * happens to have pasted a URI for their own reasons is not silently promoted to this entry's second
+ * factor.
+ */
+private fun seedFromNotes(notes: String): String? = notes.lineSequence()
+    .map(String::trim)
+    .firstOrNull { it.startsWith(LEGACY_TOTP_NOTE_MARKER) }
+    ?.removePrefix(LEGACY_TOTP_NOTE_MARKER)
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+
+/**
+ * The prefix an import used before [TOTP_EXTRA_KEY] existed.
+ *
+ * Persisted in real notes, so it is frozen. `CredentialImporter` no longer writes it.
+ */
+const val LEGACY_TOTP_NOTE_MARKER = "2FA seed (imported):"
 
 /** The one field a generated password makes sense for. Drives whether the dice button appears. */
 val ItemKind.supportsGeneratedSecret: Boolean

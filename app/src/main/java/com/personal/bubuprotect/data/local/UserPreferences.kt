@@ -88,11 +88,80 @@ class UserPreferences(context: Context) {
                 .apply()
         }
 
+    /**
+     * Apps the user has told BubuShield to leave alone.
+     *
+     * Keyed by [com.personal.bubuprotect.domain.model.ignoreKey], which folds in the signal set - so
+     * "leave this one alone" applies to the app *as it behaved when they said it*. If a tolerated app
+     * later starts drawing overlays, the key changes and the row returns without the user having to
+     * remember to look. Same self-invalidating property as [acknowledgedDeviceRisks], for the same
+     * reason.
+     */
+    var ignoredShieldApps: Set<String>
+        get() = preferences.getStringSet(KEY_IGNORED_SHIELD_APPS, emptySet()).orEmpty()
+        set(value) {
+            preferences.edit().putStringSet(KEY_IGNORED_SHIELD_APPS, value.toSet()).apply()
+        }
+
+    /**
+     * Apps whose ad-network lookups the local filter answers NXDOMAIN rather than merely counting.
+     *
+     * Package names, unhashed, and deliberately so - unlike the ignore set this is not a record of what
+     * the user was warned about, it is an active configuration the DNS filter has to read on every
+     * query. A hash would have to be reversed to be useful, and blocking is already visible to the user
+     * as a row on the screen.
+     */
+    var filteredShieldApps: Set<String>
+        get() = preferences.getStringSet(KEY_FILTERED_SHIELD_APPS, emptySet()).orEmpty()
+        set(value) {
+            preferences.edit().putStringSet(KEY_FILTERED_SHIELD_APPS, value.toSet()).apply()
+        }
+
+    /**
+     * Set when a vault is created or restored, cleared once the recovery-kit screen has been offered.
+     *
+     * A one-shot handoff rather than a check for "does a kit exist", because those are different
+     * questions. Someone who deliberately chose "Not now" should not be walked to the same screen on
+     * every unlock - that is how a warning becomes wallpaper. The persistent nudge is the tinted
+     * settings row; this is the single, well-timed offer at the one moment the vault is empty and the
+     * user has nothing to lose by spending thirty seconds on it.
+     *
+     * Persisted rather than held in memory because setup ends by opening the vault, and screen-off
+     * locks immediately - so an in-memory flag would routinely be dropped before it was ever read.
+     */
+    var recoveryKitPromptPending: Boolean
+        get() = preferences.getBoolean(KEY_RECOVERY_PROMPT_PENDING, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_RECOVERY_PROMPT_PENDING, value).apply()
+        }
+
+    /**
+     * Set after a recovery, cleared once the user has been told.
+     *
+     * Recovery ends with a new master passphrase, and every backup file already on disk is sealed
+     * with the *old* one - the one that was just forgotten. Those files are now unopenable, and
+     * nothing about them looks different.
+     *
+     * That is a trap this app would otherwise have built itself: before recovery existed, a forgotten
+     * passphrase meant no access at all, so dead backups were moot. Now the user is back inside a
+     * working vault and would reasonably assume their backups came back with it. They did not, and
+     * they will find out on the day they need one.
+     */
+    var backupRefreshNeeded: Boolean
+        get() = preferences.getBoolean(KEY_BACKUP_REFRESH_NEEDED, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_BACKUP_REFRESH_NEEDED, value).apply()
+        }
+
     private companion object {
         const val PREFERENCES_NAME = "bubu_user"
+        const val KEY_BACKUP_REFRESH_NEEDED = "backup_refresh_needed"
+        const val KEY_RECOVERY_PROMPT_PENDING = "recovery_kit_prompt_pending"
         const val KEY_SECURITY_GUIDE_SEEN = "security_guide_seen"
         const val KEY_BREACH_MONITORING = "breach_monitoring_enabled"
         const val KEY_STRICT_REVEAL = "strict_reveal_enabled"
         const val KEY_ACKNOWLEDGED_DEVICE_RISKS = "acknowledged_device_risks"
+        const val KEY_IGNORED_SHIELD_APPS = "ignored_shield_apps"
+        const val KEY_FILTERED_SHIELD_APPS = "filtered_shield_apps"
     }
 }

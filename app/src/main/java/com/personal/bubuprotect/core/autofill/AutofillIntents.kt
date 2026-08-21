@@ -82,6 +82,14 @@ internal object AutofillIntents {
     private const val EXTRA_KIND = "com.personal.bubuprotect.autofill.KIND"
 
     const val EXTRA_ENTRY_ID = "com.personal.bubuprotect.autofill.ENTRY_ID"
+
+    /**
+     * Marks a dataset that fills *only* the one-time code.
+     *
+     * The separation is the point rather than a detail of plumbing - see [AutofillResponder] on why a
+     * code and a password are never delivered by the same tap.
+     */
+    const val EXTRA_CODE_ONLY = "com.personal.bubuprotect.autofill.CODE_ONLY"
     const val EXTRA_CAPTURE_TOKEN = "com.personal.bubuprotect.autofill.CAPTURE_TOKEN"
 
     fun putSpec(intent: Intent, spec: FillSpec): Intent = intent.apply {

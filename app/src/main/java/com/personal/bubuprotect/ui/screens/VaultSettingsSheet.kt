@@ -54,6 +54,7 @@ import com.personal.bubuprotect.ui.components.BubuMood
 import com.personal.bubuprotect.ui.components.BubuOutlinedButton
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
 import com.personal.bubuprotect.ui.theme.BubuElevation
+import com.personal.bubuprotect.ui.components.relativeAge
 import com.personal.bubuprotect.ui.theme.BubuSpacing
 import com.personal.bubuprotect.ui.theme.PillShape
 import com.personal.bubuprotect.ui.theme.bubu
@@ -73,6 +74,15 @@ fun VaultSettingsSheet(
     onToggleBiometricUnlock: (Boolean) -> Unit,
     strictRevealEnabled: Boolean,
     onToggleStrictReveal: (Boolean) -> Unit,
+    hasRecoveryKit: Boolean,
+    /**
+     * True when a kit exists but cannot currently be used, because this phone's biometric enrollment
+     * changed and there is nothing to re-arm the guard with.
+     */
+    recoveryKitSealed: Boolean,
+    recoveryKitCreatedAt: Long,
+    onOpenRecoveryKit: () -> Unit,
+    onOpenImport: () -> Unit,
     autofillSupported: Boolean,
     autofillEnabled: Boolean,
     onOpenAutofillSettings: () -> Unit,
@@ -84,6 +94,8 @@ fun VaultSettingsSheet(
     deviceRiskCount: Int,
     hasCriticalDeviceRisk: Boolean,
     onOpenDeviceCheck: () -> Unit,
+    adCulpritCount: Int,
+    onOpenShield: () -> Unit,
     onExportBackup: () -> Unit,
     onLock: () -> Unit,
     onDismiss: () -> Unit,
@@ -275,6 +287,145 @@ fun VaultSettingsSheet(
                             uncheckedBorderColor = MaterialTheme.bubu.cardBorder
                         ),
                         modifier = Modifier.clearAndSetSemantics { }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(BubuSpacing.sm))
+
+            /*
+             * The recovery kit sits above everything else here, and the ordering is the message.
+             *
+             * Every other row on this screen trades convenience against exposure. This one is the
+             * only one that decides whether the vault can be recovered at all, and its unset state is
+             * the single way a user of this app can lose everything without an attacker being
+             * involved - so it is not buried under three switches about fingerprints.
+             */
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = if (hasRecoveryKit && !recoveryKitSealed) {
+                    MaterialTheme.colorScheme.surfaceContainerLow
+                } else {
+                    // Tinted, not a banner. It has to read as unfinished at a glance without turning
+                    // the settings sheet into an alarm every time it is opened.
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.32f)
+                },
+                shadowElevation = BubuElevation.card,
+                border = BorderStroke(
+                    1.dp,
+                    if (hasRecoveryKit && !recoveryKitSealed) {
+                        MaterialTheme.bubu.cardBorder.copy(alpha = 0.72f)
+                    } else {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+                    }
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable(role = Role.Button, onClick = onOpenRecoveryKit)
+                        .semantics(mergeDescendants = true) {}
+                        .padding(horizontal = BubuSpacing.md, vertical = BubuSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.ic_shield),
+                        contentDescription = null,
+                        tint = if (hasRecoveryKit && !recoveryKitSealed) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(BubuSpacing.md))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Recovery kit",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = when {
+                                // Stated plainly, because a sealed kit looks exactly like a working
+                                // one from the outside and the user has no other way to find out.
+                                recoveryKitSealed ->
+                                    "Sealed - this phone has no fingerprint set up"
+
+                                hasRecoveryKit && recoveryKitCreatedAt > 0 ->
+                                    "Created ${relativeAge(recoveryKitCreatedAt)}"
+
+                                hasRecoveryKit -> "Ready"
+
+                                // The consequence, not the feature. "Create a recovery kit" tells
+                                // someone what a button does; this tells them what happens if they
+                                // do not press it.
+                                else -> "Forget your passphrase and the vault is gone for good"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (hasRecoveryKit && !recoveryKitSealed) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            }
+                        )
+                    }
+                    Spacer(Modifier.width(BubuSpacing.sm))
+                    Text(
+                        text = when {
+                            recoveryKitSealed -> "Fix"
+                            hasRecoveryKit -> "Manage"
+                            else -> "Set up"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(BubuSpacing.sm))
+
+            /*
+             * Import sits next to export because they are the same subject read in both directions,
+             * and because someone arriving from another app will look for it near the backup rows
+             * rather than under security.
+             */
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shadowElevation = BubuElevation.card,
+                border = BorderStroke(1.dp, MaterialTheme.bubu.cardBorder.copy(alpha = 0.72f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable(role = Role.Button, onClick = onOpenImport)
+                        .semantics(mergeDescendants = true) {}
+                        .padding(horizontal = BubuSpacing.md, vertical = BubuSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.ic_kind_note),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(BubuSpacing.md))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Import passwords",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Bring a CSV in from Chrome, Bitwarden, 1Password and others",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(BubuSpacing.sm))
+                    Text(
+                        text = "Open",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -536,6 +687,70 @@ fun VaultSettingsSheet(
                 }
             }
 
+            Spacer(Modifier.height(BubuSpacing.sm))
+
+            /*
+             * The ad shield.
+             *
+             * Sits beside the device check because they answer adjacent questions - that one asks what
+             * could reach the vault, this one asks what is spamming the user - but they are kept as two
+             * rows rather than merged. A capability audit and an accusation are different claims, and a
+             * single screen holding both would blur the line this feature depends on.
+             *
+             * The count is of *convicted* apps only. A suspect never reaches this badge, because a badge
+             * is a claim that something is wrong and a permission list is not evidence that anything is.
+             */
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shadowElevation = BubuElevation.card,
+                border = BorderStroke(1.dp, MaterialTheme.bubu.cardBorder.copy(alpha = 0.72f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable(onClick = onOpenShield)
+                        .semantics(mergeDescendants = true) { role = Role.Button }
+                        .padding(horizontal = BubuSpacing.md, vertical = BubuSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.ic_shield),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(BubuSpacing.md))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Ad shield",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = when (adCulpritCount) {
+                                0 -> "Find the app that is spamming ads on this phone."
+                                1 -> "1 app has been caught spamming you."
+                                else -> "$adCulpritCount apps have been caught spamming you."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (adCulpritCount > 0) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                    if (adCulpritCount > 0) {
+                        Spacer(Modifier.width(BubuSpacing.sm))
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .background(MaterialTheme.colorScheme.error, CircleShape)
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(BubuSpacing.md))
 
             Text(
@@ -691,6 +906,11 @@ private fun VaultSettingsSheetPreview() {
             onToggleBiometricUnlock = {},
             strictRevealEnabled = true,
             onToggleStrictReveal = {},
+            hasRecoveryKit = false,
+            recoveryKitSealed = false,
+            recoveryKitCreatedAt = 0L,
+            onOpenRecoveryKit = {},
+            onOpenImport = {},
             autofillSupported = true,
             autofillEnabled = false,
             onOpenAutofillSettings = {},
@@ -702,6 +922,8 @@ private fun VaultSettingsSheetPreview() {
             deviceRiskCount = 1,
             hasCriticalDeviceRisk = true,
             onOpenDeviceCheck = {},
+            adCulpritCount = 1,
+            onOpenShield = {},
             onExportBackup = {},
             onLock = {},
             onDismiss = {}

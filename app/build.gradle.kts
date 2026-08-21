@@ -195,4 +195,13 @@ dependencies {
     // a class rather than registered as a JCE provider, so it cannot shadow the platform's own
     // crypto - and unlike a JNI build it runs in JVM unit tests, so the KDF is actually covered.
     implementation(libs.bouncycastle)
+
+    // Shizuku: the shell-privileged helper behind the remediation ladder above ADVISE.
+    //
+    // It is a *client* library only - the privileged process is the Shizuku app, which the user
+    // installs and starts themselves over wireless debugging. Nothing here escalates on its own, and
+    // every call through it degrades to "unavailable" when the service is absent, which is the normal
+    // case on a phone where the user never opted in.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 }

@@ -134,6 +134,19 @@ fun UnlockRoute(
      * `text/plain`, or nothing at all, and a strict filter would grey out the user's own file in the
      * picker. The magic bytes are the real check, and they run before the passphrase is used.
      */
+    /*
+     * The recovery flow replaces this screen rather than stacking on it.
+     *
+     * Not a dialog and not a navigation destination. A dialog would put a passphrase field on top of
+     * a passphrase field; a destination would need a locked graph this app deliberately does not have
+     * - see [com.personal.bubuprotect.ui.Routes] on why locked and unlocked are not two places in one
+     * back stack.
+     *
+     * Whether it is showing is read from the ViewModel rather than kept locally, because getting here
+     * now requires passing a biometric check - see [UnlockViewModel.requestRecoveryAccess]. A local
+     * flag would be a second source of truth for an authorisation, and the kind that survives into a
+     * saved instance state it has no business being in.
+     */
     var restoreSource by remember { mutableStateOf<Uri?>(null) }
     val restorePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -144,6 +157,18 @@ fun UnlockRoute(
     // dialog up with the message rendered by UnlockScreen behind it.
     LaunchedEffect(state.message, state.failureToken) {
         if (state.message != null && state.isMessageAnError) restoreSource = null
+    }
+
+    if (state.recoveryAccessGranted) {
+        RecoveryUnlockRoute(onCancel = viewModel::clearRecoveryAccess, modifier = modifier)
+        return
+    }
+
+    // Null hides the link entirely - see the parameter doc on UnlockScreen.
+    val useRecoveryCode: (() -> Unit)? = if (state.hasRecoveryKit) {
+        { viewModel.requestRecoveryAccess(gate) }
+    } else {
+        null
     }
 
     AnimatedContent(
@@ -176,7 +201,8 @@ fun UnlockRoute(
                     }
                 },
                 onBiometricUnlock = { viewModel.unlockWithBiometrics(gate) },
-                onRestoreBackup = { restorePicker.launch(arrayOf("*/*")) }
+                onRestoreBackup = { restorePicker.launch(arrayOf("*/*")) },
+                onUseRecoveryCode = useRecoveryCode
             )
         }
     }
@@ -213,7 +239,15 @@ fun UnlockScreen(
     onBiometricUnlock: () -> Unit,
     modifier: Modifier = Modifier,
     /** Null in previews and wherever restore is not offered. */
-    onRestoreBackup: (() -> Unit)? = null
+    onRestoreBackup: (() -> Unit)? = null,
+    /**
+     * Null when no recovery kit exists for this vault.
+     *
+     * Hidden rather than shown-and-disabled. A "Forgot your passphrase?" link that leads nowhere is
+     * worse than no link at all: someone who has genuinely forgotten would tap it, discover there is
+     * no way back, and have learned that at the one moment it is too late to act on.
+     */
+    onUseRecoveryCode: (() -> Unit)? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     val bubu = MaterialTheme.bubu
@@ -502,6 +536,18 @@ fun UnlockScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            // Locked only, and only when a kit exists. During setup there is no
+                            // passphrase to have forgotten yet.
+                            if (state.stage == UnlockStage.LOCKED && onUseRecoveryCode != null) {
+                                Spacer(Modifier.height(BubuSpacing.sm))
+                                BubuOutlinedButton(
+                                    text = "Forgot your passphrase?",
+                                    onClick = onUseRecoveryCode,
+                                    enabled = !state.isBusy,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
 
                             // Setup only. Restoring into a vault that already exists would need
                             // merge semantics - which entry wins, what happens to one that exists

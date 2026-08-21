@@ -3,6 +3,7 @@ package com.personal.bubuprotect.ui.autofill
 import android.content.Intent
 import android.os.Bundle
 import android.os.Parcelable
+import android.service.autofill.Dataset
 import android.view.autofill.AutofillManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
@@ -19,12 +20,17 @@ import com.personal.bubuprotect.core.autofill.AutofillResponder
 import com.personal.bubuprotect.core.autofill.CapturedCredential
 import com.personal.bubuprotect.core.autofill.FillSpec
 import com.personal.bubuprotect.core.autofill.PendingCapture
+import com.personal.bubuprotect.core.autofill.FieldRole
 import com.personal.bubuprotect.core.crypto.VaultKeyManager
+import com.personal.bubuprotect.core.security.BiometricAuthenticator
 import com.personal.bubuprotect.core.security.SecureWindow
 import com.personal.bubuprotect.domain.model.VaultItem
 import com.personal.bubuprotect.session.VaultSession
 import com.personal.bubuprotect.ui.components.LocalBubuImageLoader
 import com.personal.bubuprotect.ui.theme.BubuProtectTheme
+import com.personal.bubuprotect.ui.vm.BiometricGate
+import com.personal.bubuprotect.ui.vm.RevealAuthorizer
+import com.personal.bubuprotect.ui.vm.RevealOutcome
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 import timber.log.Timber
@@ -58,6 +64,18 @@ class AutofillAuthActivity : AppCompatActivity() {
     private val session: VaultSession by inject()
     private val keyManager: VaultKeyManager by inject()
     private val imageLoader: ImageLoader by inject()
+    private val authorizer: RevealAuthorizer by inject()
+    private val biometrics: BiometricAuthenticator by inject()
+
+    /**
+     * Whether the vault was shut when this activity started.
+     *
+     * Feeds `isAlreadyAuthorised` on the code path. If the user has just unlocked to get here, they
+     * authenticated seconds ago and a second prompt is noise; if the vault was *already* open, nobody
+     * has proved anything during this interaction and the code has to be earned. That second case is
+     * exactly the threat the gate exists for - somebody holding an unlocked phone.
+     */
+    private var startedLocked = true
 
     private var stage by mutableStateOf<Stage>(Stage.Working)
 
@@ -76,6 +94,7 @@ class AutofillAuthActivity : AppCompatActivity() {
         SecureWindow.harden(this)
 
         if (!prepare()) return
+        startedLocked = responder.isLocked
 
         setContent {
             BubuProtectTheme {
@@ -153,7 +172,7 @@ class AutofillAuthActivity : AppCompatActivity() {
                     AutofillIntents.MODE_RESOLVE -> {
                         val current = spec ?: return@launch cancel()
                         val entryId = intent.getStringExtra(AutofillIntents.EXTRA_ENTRY_ID)
-                        val dataset = entryId?.let { responder.datasetFor(it, current) }
+                        val dataset = entryId?.let { buildDataset(it, current) }
                         if (dataset != null) finishWith(dataset) else cancel()
                     }
 
@@ -187,7 +206,7 @@ class AutofillAuthActivity : AppCompatActivity() {
                 // Written before the dataset is built, so the choice survives even if the fill
                 // itself fails. Next time this app asks, the entry is already the top suggestion.
                 responder.rememberLink(current, item.id)
-                val dataset = responder.datasetFor(item.id, current)
+                val dataset = buildDataset(item.id, current)
                 if (dataset != null) finishWith(dataset) else cancel()
             } catch (failure: Throwable) {
                 Timber.tag(TAG).w(failure, "Could not fill the chosen entry")
@@ -214,6 +233,47 @@ class AutofillAuthActivity : AppCompatActivity() {
             // framework is not waiting on a result.
             finish()
         }
+    }
+
+    /**
+     * Produces the dataset for one entry, choosing the credential path or the code path.
+     *
+     * The code path is taken when the tapped row was a code row, and also when the screen has nothing
+     * *but* a code box - which is what a second-step 2FA page looks like, and what the picker lands on
+     * there.
+     */
+    private suspend fun buildDataset(entryId: String, spec: FillSpec): Dataset? {
+        val taggedCodeOnly = intent.getBooleanExtra(AutofillIntents.EXTRA_CODE_ONLY, false)
+        val codeIsAllThereIs = spec.roles == setOf(FieldRole.OTP)
+
+        if (!taggedCodeOnly && !codeIsAllThereIs) {
+            return responder.datasetFor(entryId, spec)
+        }
+
+        // The second factor gets a second authentication. See [startedLocked].
+        val outcome = authorizer.authorize(
+            gate = biometricGate(),
+            title = getString(R.string.autofill_code_prompt),
+            isAlreadyAuthorised = startedLocked
+        )
+        if (outcome !is RevealOutcome.Allowed) return null
+
+        return responder.codeDatasetFor(entryId, spec, System.currentTimeMillis())
+    }
+
+    /**
+     * A prompt host bound to this activity.
+     *
+     * Built here rather than through `rememberBiometricGate` because this decision happens outside the
+     * composition - the common code path never draws anything at all.
+     */
+    private fun biometricGate(): BiometricGate = BiometricGate { title, subtitle, cryptoObject ->
+        biometrics.authenticate(
+            activity = this@AutofillAuthActivity,
+            title = title,
+            subtitle = subtitle,
+            cryptoObject = cryptoObject
+        )
     }
 
     private fun finishWith(result: Parcelable) {

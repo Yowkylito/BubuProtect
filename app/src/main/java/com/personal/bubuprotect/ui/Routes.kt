@@ -45,6 +45,37 @@ sealed interface Routes {
     @Serializable
     data object DeviceCheck : Routes
 
+    /**
+     * BubuShield: which app is spamming ads.
+     *
+     * Argument-free for the same reason as [DeviceCheck], and the reason is sharper here. Its findings
+     * name other apps on the phone and accuse some of them, and a navigation `Bundle` is something the
+     * system may write to disk on process death. The report is re-derived on arrival - which it has to
+     * be anyway, since "is this app drawing ads" is only meaningful as of now.
+     */
+    @Serializable
+    data object Shield : Routes
+
+    /**
+     * The recovery kit.
+     *
+     * Argument-free, and it has to be: the code this screen shows is a full credential, and a
+     * navigation argument lands in a `Bundle` the system may write to disk on process death. The code
+     * is held in a ViewModel that drops it when the screen leaves the composition instead.
+     */
+    @Serializable
+    data object RecoveryKit : Routes
+
+    /**
+     * Import from another password manager.
+     *
+     * Argument-free: the picked file's `Uri` lives in the ViewModel for the length of the flow rather
+     * than in a navigation `Bundle`. It points at a plaintext file full of credentials, and a `Bundle`
+     * is something the system may write to disk on process death.
+     */
+    @Serializable
+    data object Import : Routes
+
     @Serializable
     data class Detail(val entryId: String) : Routes
 

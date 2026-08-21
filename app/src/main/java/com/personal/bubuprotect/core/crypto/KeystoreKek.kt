@@ -30,15 +30,23 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * Because the key is destroyed on re-enrollment, this wrapper is only ever the *convenience* path.
  * [PassphraseKdf] provides the recovery path that survives it.
+ *
+ * ### Two instances, two purposes
+ *
+ * [alias] is a parameter because the app needs two of these keys with identical properties and
+ * independent lifetimes. The default wraps the root key for biometric unlock. The second, under
+ * [ALIAS_RECOVERY_GUARD], guards the recovery screen - and there the self-destruction on re-enrollment
+ * stops being a limitation and becomes the entire point. See
+ * [VaultKeyManager.beginRecoveryGuardCheck].
  */
-class KeystoreKek {
+class KeystoreKek(private val alias: String = ALIAS_VAULT) {
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
-    fun exists(): Boolean = runCatching { keyStore.containsAlias(ALIAS) }.getOrDefault(false)
+    fun exists(): Boolean = runCatching { keyStore.containsAlias(alias) }.getOrDefault(false)
 
-    fun delete() = runCatching { keyStore.deleteEntry(ALIAS) }.getOrElse {
-        Timber.tag(TAG).w("Could not delete KEK: %s", it.javaClass.simpleName)
+    fun delete() = runCatching { keyStore.deleteEntry(alias) }.getOrElse {
+        Timber.tag(TAG).w("Could not delete key %s: %s", alias, it.javaClass.simpleName)
     }
 
     /**
@@ -68,7 +76,7 @@ class KeystoreKek {
 
     private fun generate(strongBox: Boolean) {
         val spec = KeyGenParameterSpec.Builder(
-            ALIAS,
+            alias,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -115,13 +123,25 @@ class KeystoreKek {
     }
 
     private fun requireKey(): SecretKey =
-        keyStore.getKey(ALIAS, null) as? SecretKey
-            ?: throw IllegalStateException("Vault KEK is missing from the Android Keystore")
+        keyStore.getKey(alias, null) as? SecretKey
+            ?: throw IllegalStateException("Keystore key $alias is missing")
 
     companion object {
         private const val TAG = "KeystoreKek"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val ALIAS = "bubu.vault.kek.v1"
+
+        /** Wraps the root key for biometric unlock. */
+        const val ALIAS_VAULT = "bubu.vault.kek.v1"
+
+        /**
+         * Guards the recovery screen.
+         *
+         * Deliberately a *separate* key from [ALIAS_VAULT], not a reuse of it. The vault wrapper is
+         * optional - a user who never turns on fingerprint unlock does not have one - and the recovery
+         * gate has to work regardless of that choice. Separate aliases also mean disabling biometric
+         * unlock cannot silently disarm the recovery gate.
+         */
+        const val ALIAS_RECOVERY_GUARD = "bubu.recovery.guard.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val TAG_BITS = 128
     }

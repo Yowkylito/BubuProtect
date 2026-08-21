@@ -61,6 +61,52 @@ class VaultKeyStore(context: Context) {
         .remove(KEY_BIOMETRIC_IV)
         .apply()
 
+    // --- Recovery kit --------------------------------------------------------------------------
+
+    /** True once a recovery kit has been generated. Optional, unlike the passphrase wrapper. */
+    val hasRecoveryWrapper: Boolean
+        get() = prefs.contains(KEY_RECOVERY_WRAPPED) && prefs.contains(KEY_RECOVERY_SALT)
+
+    val recoverySalt: ByteArray get() = readBytes(KEY_RECOVERY_SALT)
+
+    /** MEK sealed with the key derived from the recovery code. */
+    val recoveryWrappedMek: ByteArray get() = readBytes(KEY_RECOVERY_WRAPPED)
+
+    /**
+     * When the current kit was generated, or 0.
+     *
+     * Shown to the user, and the only thing that distinguishes two printed kits found in a drawer.
+     * That is why no separate vault identifier is stored: the date already answers the question a
+     * second identifier would, and a vault fingerprint sitting in plain preferences would be one
+     * more correlatable value for no gain.
+     */
+    val recoveryCreatedAt: Long get() = prefs.getLong(KEY_RECOVERY_CREATED_AT, 0L)
+
+    /**
+     * Writes the recovery wrapper and its salt together.
+     *
+     * Atomic for the same reason [writePassphraseWrapper] is, and it matters more here: a salt
+     * written without its wrapper would leave [hasRecoveryWrapper] half-true, and the UI would tell
+     * the user a kit exists for a code that opens nothing.
+     *
+     * Overwriting is how a kit is revoked. A fresh salt and a fresh box mean every previously
+     * printed code stops working the moment a new one is generated - so "I think someone saw my
+     * kit" is answered by printing another, with no separate revocation list to keep.
+     */
+    fun writeRecoveryWrapper(salt: ByteArray, wrapped: ByteArray, createdAt: Long) {
+        prefs.edit()
+            .putString(KEY_RECOVERY_SALT, encode(salt))
+            .putString(KEY_RECOVERY_WRAPPED, encode(wrapped))
+            .putLong(KEY_RECOVERY_CREATED_AT, createdAt)
+            .apply()
+    }
+
+    fun clearRecoveryWrapper() = prefs.edit()
+        .remove(KEY_RECOVERY_SALT)
+        .remove(KEY_RECOVERY_WRAPPED)
+        .remove(KEY_RECOVERY_CREATED_AT)
+        .apply()
+
     /** Writes the passphrase wrapper and its parameters atomically, so a crash cannot half-enroll. */
     fun writePassphraseWrapper(salt: ByteArray, iterations: Int, wrapped: ByteArray) {
         prefs.edit()
@@ -118,6 +164,9 @@ class VaultKeyStore(context: Context) {
         const val KEY_PASSPHRASE_WRAPPED = "passphrase_wrapped_mek"
         const val KEY_BIOMETRIC_WRAPPED = "biometric_wrapped_mek"
         const val KEY_BIOMETRIC_IV = "biometric_iv"
+        const val KEY_RECOVERY_SALT = "recovery_salt"
+        const val KEY_RECOVERY_WRAPPED = "recovery_wrapped_mek"
+        const val KEY_RECOVERY_CREATED_AT = "recovery_created_at"
         const val KEY_FAILED_ATTEMPTS = "failed_attempts"
         const val KEY_LOCKOUT_UNTIL = "lockout_until"
         const val KEY_LOCKOUT_SET_AT = "lockout_set_at"

@@ -2,10 +2,19 @@ package com.personal.bubuprotect.di
 
 import com.personal.bubuprotect.core.autofill.AutofillResponder
 import com.personal.bubuprotect.core.backup.VaultBackupService
+import com.personal.bubuprotect.core.importer.CredentialImportService
 import com.personal.bubuprotect.core.crypto.KeystoreKek
 import com.personal.bubuprotect.core.crypto.VaultKeyManager
 import com.personal.bubuprotect.core.nfc.EmvCardReader
 import com.personal.bubuprotect.core.nfc.NfcCardScanner
+import com.personal.bubuprotect.core.shield.AppRiskScanner
+import com.personal.bubuprotect.core.shield.ShieldCapabilities
+import com.personal.bubuprotect.core.shield.enforce.RemediationLadder
+import com.personal.bubuprotect.core.shield.enforce.ShizukuGateway
+import com.personal.bubuprotect.core.shield.intel.SignerFingerprinter
+import com.personal.bubuprotect.core.shield.intel.StaticApkAnalyzer
+import com.personal.bubuprotect.core.shield.recorder.FlightRecorder
+import com.personal.bubuprotect.core.shield.recorder.UsageTimelineProbe
 import com.personal.bubuprotect.core.security.BiometricAuthenticator
 import com.personal.bubuprotect.core.security.DeviceThreatScanner
 import com.personal.bubuprotect.core.security.HibpPwnedPasswordsClient
@@ -25,6 +34,10 @@ import com.personal.bubuprotect.ui.components.createImageLoader
 import com.personal.bubuprotect.ui.vm.DeviceCheckViewModel
 import com.personal.bubuprotect.ui.vm.EntryDetailViewModel
 import com.personal.bubuprotect.ui.vm.EntryEditorViewModel
+import com.personal.bubuprotect.ui.vm.ImportViewModel
+import com.personal.bubuprotect.ui.vm.RecoveryKitViewModel
+import com.personal.bubuprotect.ui.vm.RecoveryUnlockViewModel
+import com.personal.bubuprotect.ui.vm.ShieldViewModel
 import com.personal.bubuprotect.ui.vm.RevealAuthorizer
 import com.personal.bubuprotect.ui.vm.UnlockViewModel
 import com.personal.bubuprotect.ui.vm.VaultViewModel
@@ -47,7 +60,9 @@ val appModule = module {
     single { VaultKeyStore(androidContext()) }
     single { UserPreferences(androidContext()) }
     single { KeystoreKek() }
-    single { VaultKeyManager(get(), get()) }
+    // Two Keystore keys with identical properties and independent lifetimes: one wraps the root
+    // key for biometric unlock, the other guards the recovery screen.
+    single { VaultKeyManager(get(), KeystoreKek(), KeystoreKek(KeystoreKek.ALIAS_RECOVERY_GUARD)) }
     single { BiometricAuthenticator(androidContext()) }
     single { IntegrityChecker() }
     single { LockoutTracker(get()) }
@@ -56,6 +71,21 @@ val appModule = module {
     single { PwnedPasswordChecker(get()) }
     single { VaultBreachScanner(get(), get()) }
     single { DeviceThreatScanner(get()) }
+
+    // BubuShield.
+    //
+    // The FlightRecorder is a singleton and has to be: the accessibility service, the notification
+    // listener and the VPN's packet loop are all constructed by the *system*, not by Koin, and they
+    // reach in via KoinComponent to find this exact instance. A factory here would give each sensor its
+    // own private buffer and the shield would observe nothing.
+    single { FlightRecorder() }
+    single { SignerFingerprinter(androidContext().packageName) }
+    single { StaticApkAnalyzer() }
+    single { UsageTimelineProbe() }
+    single { ShizukuGateway() }
+    single { RemediationLadder(get()) }
+    single { ShieldCapabilities(get(), get()) }
+    single { AppRiskScanner(get(), get(), get()) }
     single { RevealAuthorizer(get(), get()) }
 
     // Stateless, and holds no Context - the Activity is passed per scan so a sheet that leaves the
@@ -70,6 +100,7 @@ val appModule = module {
     single<VaultRepository> { VaultRepositoryImpl(get()) }
 
     single { VaultBackupService(androidContext(), get()) }
+    single { CredentialImportService(androidContext()) }
 
     // Shared by the autofill service and the screen that runs after its authentication, so both
     // build datasets the same way. See AutofillResponder for why that has to be one implementation.
@@ -85,12 +116,26 @@ val appModule = module {
      */
     single { createImageLoader(androidContext()) }
 
-    viewModel { UnlockViewModel(get(), get(), get(), get(), get(), get(), androidContext()) }
+    viewModel { UnlockViewModel(get(), get(), get(), get(), get(), get(), get(), androidContext()) }
+
+    // RecoveryUnlockViewModel lives on the locked side and holds the recovered root key
+    // between its two steps, wiping it in onCleared - see its class doc for why that is
+    // unavoidable. RecoveryKitViewModel is the opposite: it needs an already-open session,
+    // because minting a kit means wrapping the live key.
+    viewModel { RecoveryUnlockViewModel(get(), get(), get(), get()) }
+    viewModel { RecoveryKitViewModel(get(), get(), get(), androidContext()) }
+    viewModel { ImportViewModel(get(), get()) }
     viewModel { VaultViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
 
     // Application context, not the Activity's: this one is scoped to the unlocked shell and outlives
     // configuration changes, so an Activity reference here would be a leak per rotation.
     viewModel { DeviceCheckViewModel(get(), get(), androidContext()) }
+
+    // Same ownership as DeviceCheckViewModel: scoped to the unlocked shell, application context rather
+    // than the Activity's, and cleared on lock - which is also what drops the recorder's buffer.
+    viewModel {
+        ShieldViewModel(get(), get(), get(), get(), get(), get(), get(), androidContext())
+    }
 
     // Parameterised: the entry id comes from the navigation route, not from the graph.
     viewModel { parameters ->

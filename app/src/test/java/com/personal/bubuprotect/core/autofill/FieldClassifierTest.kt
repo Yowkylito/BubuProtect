@@ -142,15 +142,45 @@ class FieldClassifierTest {
     }
 
     /**
-     * A one-time-code box is short and numeric and will happily swallow a PIN or a card security
-     * code. Filling it is worse than doing nothing: it burns an attempt against a rate limit the
-     * user cannot see.
+     * One-time-code boxes are now recognised rather than refused.
+     *
+     * They used to be on the deny list, and the reason was sound while the vault held no seeds: the
+     * only thing that could be typed into one was a password, and a password in an OTP box burns an
+     * attempt against a rate limit the user cannot see.
+     *
+     * Nothing has been loosened by naming them. [com.personal.bubuprotect.core.autofill.AutofillResponder]
+     * only builds a code dataset for an entry that actually carries a seed, so a vault with no 2FA
+     * still offers nothing here - and a password is never a candidate for this role at all.
      */
     @Test
-    fun `leaves one-time-code fields alone`() {
-        assertNull(FieldClassifier.classify(node(idEntry = "otp_code")))
-        assertNull(FieldClassifier.classify(node(hint = "Verification code")))
-        assertNull(FieldClassifier.classify(node(idEntry = "twoFactorInput")))
+    fun `recognises one-time-code fields`() {
+        assertEquals(FieldRole.OTP, FieldClassifier.classify(node(idEntry = "otp_code")))
+        assertEquals(FieldRole.OTP, FieldClassifier.classify(node(hint = "Verification code")))
+        assertEquals(FieldRole.OTP, FieldClassifier.classify(node(idEntry = "twoFactorInput")))
+        assertEquals(
+            FieldRole.OTP,
+            FieldClassifier.classify(node(html = mapOf("autocomplete" to "one-time-code")))
+        )
+    }
+
+    /**
+     * A checkout page carries both, and "code" is in both vocabularies. Getting this backwards puts
+     * a card's security code into a 2FA box, or a rolling code into the CVV field.
+     */
+    @Test
+    fun `tells a one-time code apart from a card security code`() {
+        assertEquals(FieldRole.CARD_SECURITY_CODE, FieldClassifier.classify(node(hint = "CVV")))
+        assertEquals(
+            FieldRole.CARD_SECURITY_CODE,
+            FieldClassifier.classify(node(idEntry = "card_security_code"))
+        )
+        assertEquals(FieldRole.OTP, FieldClassifier.classify(node(idEntry = "sms_code")))
+    }
+
+    /** A captcha stays refused: no stored value can ever answer one. */
+    @Test
+    fun `leaves captchas alone`() {
+        assertNull(FieldClassifier.classify(node(idEntry = "captcha_answer")))
     }
 
     @Test

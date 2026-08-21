@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
         INTERNET is used only by the explicit Pwned Passwords range check. That request contains a
@@ -9,6 +10,35 @@
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+
+    <!--
+        BubuShield.
+
+        REQUEST_DELETE_PACKAGES only lets this app *ask*. The system shows its own confirmation
+        dialog and the user decides; it is the whole uninstall story at the ADVISE tier.
+
+        PACKAGE_USAGE_STATS is an appops grant rather than a runtime permission - declaring it does
+        nothing at all until the user flips it in Settings, and the shield treats it as optional. It
+        is what turns "an ad appeared" into "this app launched itself into the foreground while you
+        were not using it".
+
+        No BIND_* permission is declared up here for the accessibility and notification services.
+        Those are held by the *system*; declaring them on the service elements below is what stops
+        anything else on the device binding to ours.
+    -->
+    <!--
+        ACCESS_NETWORK_STATE is what lets the DNS filter read the resolver the phone is already using,
+        so it can forward queries there instead of to a hardcoded public resolver. Without it the
+        filter cannot determine an upstream and refuses to start rather than black-holing DNS.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!--
@@ -29,25 +59,41 @@
         android:required="false" />
 
     <!--
-        Package visibility for the device check, and nothing wider than it needs.
+        Package visibility. This is the widest permission in the app, so it gets its own argument.
 
-        The device check tells the user which apps hold a capability that could reach the vault -
-        reading the screen, reading notifications, admin control. Android hands us the *component
-        names* of those without any declaration, but turning "com.example.thing/.Service" into a name
-        a human can act on means loading that package's label, and since Android 11 that requires
-        package visibility.
+        The device check only ever needed three intent filters, because it reports on apps that have
+        already declared a dangerous service type - Android hands those component names over with no
+        declaration at all. BubuShield asks a different question: *which* of the several hundred apps
+        on this phone is drawing ads over the others. That cannot be answered from a filtered view,
+        because an adware APK declares no service type worth filtering on. It needs the whole list.
 
-        Note what is deliberately absent: QUERY_ALL_PACKAGES. It would resolve every label in one line
-        and it is the wrong answer twice over. Play treats it as a restricted permission a password
-        manager has no case for, and more to the point it would give this app the ability to inventory
-        everything the user has installed - which is close to the capability the device check exists to
-        warn them about. An app that fingerprints your phone in order to tell you what is fingerprinting
-        your phone has not helped.
+        The comment that used to stand here argued QUERY_ALL_PACKAGES was wrong twice over: Play
+        treats it as a restricted permission, and an app that inventories your phone in order to tell
+        you what is inventorying your phone has not helped. The first half no longer applies - this
+        app is not distributed through Play. The second half still stands, and is answered by
+        construction rather than by promise:
 
-        These three filters are the minimum that answers the question: they make visible only apps that
-        declare one of the three dangerous service types the check reports on. Anything outside them
-        stays invisible, the label lookup fails, and the user sees a raw package name - a worse row, not
-        a broken feature.
+          - The inventory never leaves the device. There is no reputation backend, no telemetry and
+            no analytics here. INTERNET is used by exactly one call, the Pwned Passwords range check,
+            which sends a five-character hash prefix and nothing else.
+          - Nothing derived from the inventory is written to disk in readable form. Verdicts live in
+            memory for the session. The only persisted state is the user's own ignore decisions,
+            stored as hashes, the same way the device-check acknowledgements already are.
+          - BubuShield reports on itself, matched by signing certificate, so the scanner cannot
+            quietly exempt the app running it.
+
+        An inventory that is read, shown to the user and dropped on lock is a different object from
+        one that is collected. This app holds the permission in order to answer a question the user
+        asked out loud, and the answer is the only thing that leaves the process.
+    -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!--
+        Kept even though QUERY_ALL_PACKAGES makes them redundant, because they document the narrow
+        visibility the device check alone needs. If the shield is ever removed, what this app actually
+        requires is already written down rather than having to be rediscovered.
     -->
     <queries>
         <intent>
@@ -145,6 +191,105 @@
             android:taskAffinity=""
             android:theme="@style/Theme.BubuProtect.Autofill"
             android:windowSoftInputMode="adjustResize" />
+
+        <!--
+            BubuShield's window watcher.
+
+            This is the uncomfortable one, and it is worth saying why out loud: the device check in
+            this same app reports an active accessibility service as a CRITICAL finding, because such
+            a service is handed the semantics tree of every screen including a revealed password.
+            That finding is correct, and it applies to this service too.
+
+            The reason it is here anyway is that it is the only API on Android that can answer "which
+            app just drew that ad over your screen". getWindows() returns every live window with the
+            owning package attached, and an ad overlay has to accept touch to be clickable, so it
+            surfaces there. Nothing else on the platform attributes an overlay to its owner.
+
+            Three things narrow it. canRetrieveWindowContent is false, so this service asks for window
+            *identity* and not window *contents* - it never receives the text of any screen. There is
+            no notificationTimeout-driven content crawl. And BubuShield lists itself in its own
+            report, by signing certificate, so the user is told this service exists rather than having
+            to find it.
+
+            BIND_ACCESSIBILITY_SERVICE is held only by the system, which is what makes exported=true
+            safe: nothing else on the device can bind here.
+        -->
+        <service
+            android:name=".core.shield.recorder.ShieldAccessibilityService"
+            android:exported="true"
+            android:label="@string/shield_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/shield_accessibility" />
+        </service>
+
+        <!--
+            The notification tap.
+
+            Same access-control story: BIND_NOTIFICATION_LISTENER_SERVICE is a system-only permission.
+
+            This one earns its grant by being the only tier that can *act* rather than only observe -
+            cancelNotification() dismisses another app's notification, so ad-spam can be cleared
+            without uninstalling anything. It reads posting package, channel and timestamp; it does
+            not read notification text, and the recorder has no field to put it in.
+        -->
+        <service
+            android:name=".core.shield.recorder.ShieldNotificationListener"
+            android:exported="true"
+            android:label="@string/shield_notification_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            The local DNS filter.
+
+            "Local" is the whole design: this VpnService establishes a tunnel whose only route is a
+            single /32 pointing at its own fake DNS server, so DNS is the only traffic that enters the
+            tunnel and everything else goes straight out through the kernel as usual. There is no
+            remote endpoint, no upstream server, and no possibility of this app carrying the user's
+            traffic anywhere - which also means no userspace TCP stack, and no battery cost for
+            traffic it does not inspect.
+
+            BIND_VPN_SERVICE is system-only, and the user has to accept Android's own VPN consent
+            dialog before the tunnel can be established.
+        -->
+        <service
+            android:name=".core.shield.network.ShieldVpnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local DNS filtering for ad-network attribution. No remote endpoint." />
+        </service>
+
+        <!--
+            Shizuku's binder handoff.
+
+            Declared, not started. This provider exists so the Shizuku app can hand this app a binder
+            when - and only when - the user has installed Shizuku and started it themselves over
+            wireless debugging. permission is Shizuku's own, enabled=false and exported=true are what
+            its API requires, and multiprocess=false keeps one binder for the process.
+
+            On a phone where the user never opted in, this is inert.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

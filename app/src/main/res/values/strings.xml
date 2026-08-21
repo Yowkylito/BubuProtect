@@ -14,6 +14,8 @@
     <string name="autofill_unlock_title">Unlock Bubu Protect</string>
     <string name="autofill_unlock_subtitle">Tap to sign in and fill</string>
 
+    <string name="autofill_code_subtitle">One-time code</string>
+    <string name="autofill_code_prompt">Show your one-time code</string>
     <string name="autofill_browse_title">Search Bubu Protect</string>
     <string name="autofill_browse_subtitle_more">Use a different saved entry</string>
     <string name="autofill_browse_subtitle_none">Nothing saved for %1$s yet</string>
@@ -38,4 +40,11 @@
     <string name="autofill_settings_unsupported">This phone does not offer autofill</string>
     <string name="autofill_settings_action_enable">Turn on</string>
     <string name="autofill_settings_action_manage">Manage</string>
+    <!-- BubuShield -->
+    <string name="shield_accessibility_label">Bubu Shield ad watcher</string>
+    <string name="shield_accessibility_description">Lets Bubu name the app that draws ads over your screen. Bubu reads which windows exist and which app owns them. It does not read the contents of any screen.</string>
+    <string name="shield_notification_label">Bubu Shield notification tap</string>
+    <string name="shield_vpn_channel">Ad filter</string>
+    <string name="shield_vpn_running">Filtering ad networks</string>
+    <string name="shield_vpn_running_detail">Only DNS goes through Bubu. Your other traffic is untouched.</string>
 </resources>

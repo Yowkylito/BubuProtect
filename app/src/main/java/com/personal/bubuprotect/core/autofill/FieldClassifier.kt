@@ -71,6 +71,8 @@ internal object FieldClassifier {
      */
     private fun fromVocabulary(token: String): FieldRole? = when (normalize(token)) {
         "username", "newusername", "email", "emailaddress" -> FieldRole.USERNAME
+        // `one-time-code` is the standard autocomplete token, and browsers and iOS both emit it.
+        "onetimecode", "otp" -> FieldRole.OTP
         "password", "newpassword", "currentpassword" -> FieldRole.PASSWORD
         "creditcardnumber", "ccnumber", "cardnumber" -> FieldRole.CARD_NUMBER
         "creditcardexpirationdate", "creditcardexpirationmonth", "creditcardexpirationyear",
@@ -92,6 +94,9 @@ internal object FieldClassifier {
         if (haystack.isEmpty()) return null
 
         return when {
+            // Ahead of the card security code: "code" appears in both vocabularies, and a one-time
+            // code box on a checkout page must not be mistaken for a CVV field.
+            haystack.containsAny(ONE_TIME_CODE) -> FieldRole.OTP
             haystack.containsAny(CARD_SECURITY_CODE) -> FieldRole.CARD_SECURITY_CODE
             haystack.containsAny(CARD_EXPIRY) -> FieldRole.CARD_EXPIRY
             haystack.containsAny(CARD_HOLDER) -> FieldRole.CARD_HOLDER
@@ -134,14 +139,19 @@ internal object FieldClassifier {
     /**
      * Fields that must never be filled even though they read like something fillable.
      *
-     * `search` and `query` are the common false positives on a login page. The one-time-code family
-     * is here because those fields are short and numeric and will happily accept a PIN or a card
-     * security code, and because a code that is not the code is worse than an empty box - it burns
-     * an attempt against a rate limit the user cannot see.
+     * The one-time-code family used to live here. It has moved to [ONE_TIME_CODE] now that the vault
+     * can hold a seed - but nothing has been loosened: a dataset for an OTP field is only built when
+     * the matched entry actually has one, so a vault with no seeds behaves exactly as it did before.
+     *
+     * `captcha` stays, because no stored value can ever answer one.
      */
     private val DENY = listOf(
-        "search", "query", "captcha", "otp", "onetimecode", "verificationcode", "smscode",
-        "authcode", "twofactor", "2fa", "mfacode", "url", "website", "homepage"
+        "search", "query", "captcha", "url", "website", "homepage"
+    )
+
+    private val ONE_TIME_CODE = listOf(
+        "onetimecode", "onetimepass", "verificationcode", "smscode", "authcode", "twofactor",
+        "2fa", "mfacode", "otpcode", "totp"
     )
 
     private val PASSWORD = listOf(

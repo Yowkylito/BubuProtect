@@ -21,6 +21,7 @@ room = "2.8.4"
 sqlcipher = "4.17.0"
 timber = "5.0.1"
 bouncycastle = "1.80"
+shizuku = "13.1.5"
 
 [libraries]
 androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
@@ -55,6 +56,8 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

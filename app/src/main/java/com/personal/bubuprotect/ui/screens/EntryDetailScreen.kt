@@ -56,7 +56,10 @@ import com.personal.bubuprotect.domain.model.BreachStatus
 import com.personal.bubuprotect.domain.model.BreachVerdict
 import com.personal.bubuprotect.domain.model.FieldSpec
 import com.personal.bubuprotect.domain.model.ItemKind
+import com.personal.bubuprotect.domain.model.FieldSlot
 import com.personal.bubuprotect.domain.model.VaultEntry
+import com.personal.bubuprotect.domain.model.totpSource
+import com.personal.bubuprotect.domain.model.TOTP_EXTRA_KEY
 import com.personal.bubuprotect.ui.components.BreachBadge
 import com.personal.bubuprotect.ui.components.BubuButton
 import com.personal.bubuprotect.ui.components.BubuIconButton
@@ -70,6 +73,7 @@ import com.personal.bubuprotect.ui.components.KindBadge
 import com.personal.bubuprotect.ui.components.LoadingPane
 import com.personal.bubuprotect.ui.components.ResponsiveContainer
 import com.personal.bubuprotect.ui.components.VaultFieldRow
+import com.personal.bubuprotect.ui.components.TotpCodeCard
 import com.personal.bubuprotect.ui.components.accent
 import com.personal.bubuprotect.ui.components.formatExposure
 import com.personal.bubuprotect.ui.components.relativeAge
@@ -85,6 +89,7 @@ import com.personal.bubuprotect.ui.vm.EntryDetailUiState
 import com.personal.bubuprotect.ui.vm.EntryDetailViewModel
 import com.personal.bubuprotect.ui.vm.PasswordBreachState
 import com.personal.bubuprotect.ui.vm.RevealedField
+import com.personal.bubuprotect.ui.vm.TotpDisplay
 import com.personal.bubuprotect.ui.vm.rememberBiometricGate
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -123,6 +128,9 @@ fun EntryDetailRoute(
         onHide = viewModel::hide,
         onCopy = { spec -> viewModel.copy(spec, gate) },
         onCheckPasswordBreach = { viewModel.checkPasswordBreach(gate) },
+        onShowTotp = { viewModel.showTotpCode(gate) },
+        onHideTotp = viewModel::hideTotpCode,
+        onCopyTotp = { viewModel.copyTotpCode(gate) },
         onOpenBreachReport = onOpenBreachReport,
         onRetry = viewModel::load,
         modifier = modifier
@@ -149,6 +157,9 @@ fun EntryDetailScreen(
     onCopy: (FieldSpec) -> Unit,
     onCheckPasswordBreach: () -> Unit = {},
     onOpenBreachReport: (() -> Unit)? = null,
+    onShowTotp: () -> Unit = {},
+    onHideTotp: () -> Unit = {},
+    onCopyTotp: () -> Unit = {},
     onRetry: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -211,6 +222,10 @@ fun EntryDetailScreen(
                         passwordBreach = state.passwordBreach,
                         onCheckPasswordBreach = onCheckPasswordBreach,
                         onOpenBreachReport = onOpenBreachReport,
+                        totp = state.totp,
+                        onShowTotp = onShowTotp,
+                        onHideTotp = onHideTotp,
+                        onCopyTotp = onCopyTotp,
                         onRequestDelete = { confirmingDelete = true }
                     )
                 }
@@ -246,10 +261,24 @@ private fun EntryFields(
     passwordBreach: PasswordBreachState,
     onCheckPasswordBreach: () -> Unit,
     onOpenBreachReport: (() -> Unit)?,
+    totp: TotpDisplay?,
+    onShowTotp: () -> Unit,
+    onHideTotp: () -> Unit,
+    onCopyTotp: () -> Unit,
     onRequestDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val fields = remember(entry) { entry.populatedFields() }
+    /*
+     * The 2FA seed is dropped from the generic rows on purpose.
+     *
+     * Every other field is worth reading as text. This one is an `otpauth://` URI whose only use is
+     * to be turned into a code, so rendering it here would put the thing that generates every future
+     * code on screen in place of the code the user actually came for. [TotpCodeCard] takes its slot.
+     */
+    val hasSeed = remember(entry) { entry.totpSource() != null }
+    val fields = remember(entry) {
+        entry.populatedFields().filterNot { it.slot == FieldSlot.Extra(TOTP_EXTRA_KEY) }
+    }
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     ResponsiveContainer(modifier = modifier.fillMaxSize()) {
@@ -277,6 +306,17 @@ private fun EntryFields(
                     transient = passwordBreach,
                     onCheck = onCheckPasswordBreach,
                     onOpenReport = onOpenBreachReport
+                )
+            }
+        }
+
+        if (hasSeed) {
+            item(key = "totp") {
+                TotpCodeCard(
+                    display = totp,
+                    onShow = onShowTotp,
+                    onHide = onHideTotp,
+                    onCopy = onCopyTotp
                 )
             }
         }

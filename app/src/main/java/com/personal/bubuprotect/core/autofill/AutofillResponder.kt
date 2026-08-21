@@ -12,10 +12,13 @@ import com.personal.bubuprotect.core.autofill.DatasetCompat.putValue
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import com.personal.bubuprotect.R
+import com.personal.bubuprotect.core.otp.OtpAuthUri
+import com.personal.bubuprotect.core.otp.TotpGenerator
 import com.personal.bubuprotect.domain.model.ItemKind
 import com.personal.bubuprotect.domain.model.VaultDraft
 import com.personal.bubuprotect.domain.model.VaultEntry
 import com.personal.bubuprotect.domain.model.VaultItem
+import com.personal.bubuprotect.domain.model.totpSource
 import com.personal.bubuprotect.domain.repository.VaultRepository
 import com.personal.bubuprotect.session.VaultSession
 import kotlinx.coroutines.flow.first
@@ -64,6 +67,29 @@ internal class AutofillResponder(
             )
         }
 
+        /*
+         * A separate row per matching entry that actually holds a seed.
+         *
+         * Conditional on the seed existing, which is what preserves the old protection: an entry with
+         * no 2FA still offers nothing for a one-time-code box, so a password can never land there.
+         */
+        if (FieldRole.OTP in spec.roles) {
+            matches.forEach { match ->
+                if (!hasSeed(match.item.id)) return@forEach
+                builder.addDataset(
+                    placeholderDataset(
+                        spec = spec,
+                        title = match.item.label,
+                        subtitle = context.getString(R.string.autofill_code_subtitle),
+                        kind = match.item.kind,
+                        mode = AutofillIntents.MODE_RESOLVE,
+                        entryId = match.item.id,
+                        codeOnly = true
+                    )
+                )
+            }
+        }
+
         // Always present, even when something matched: it is the second account on a site, and it is
         // the only path by which an unmatched native app can become a matched one, because picking
         // here is what writes the link.
@@ -103,6 +129,17 @@ internal class AutofillResponder(
                 )
             )
             .build()
+
+    /**
+     * Whether an entry carries a 2FA seed.
+     *
+     * Decrypts the entry to find out, which is the cost of the seed living inside the encrypted
+     * extras blob rather than in a plain column. That is the right trade: a plain `has_totp` column
+     * would let anyone who defeated SQLCipher enumerate which accounts the user has a second factor
+     * on, which is a map of exactly where to concentrate an attack.
+     */
+    private suspend fun hasSeed(entryId: String): Boolean =
+        runCatching { repository.getEntry(entryId)?.totpSource() != null }.getOrDefault(false)
 
     /** Entries worth offering, best first. */
     suspend fun matches(spec: FillSpec, kind: ItemKind): List<AutofillMatch> {
@@ -158,6 +195,43 @@ internal class AutofillResponder(
         return builder.build()
     }
 
+    /**
+     * The dataset that fills a one-time code, and nothing else.
+     *
+     * @return null when the entry has no seed, or its seed no longer parses. Both mean there is no
+     *   code to offer, and an empty dataset would report a fill that put nothing anywhere.
+     */
+    suspend fun codeDatasetFor(entryId: String, spec: FillSpec, nowMillis: Long): Dataset? {
+        val otpId = spec.idOf(FieldRole.OTP) ?: return null
+        val entry = repository.getEntry(entryId) ?: return null
+        val secret = entry.totpSource()?.let(OtpAuthUri::parse) ?: return null
+        val seed = secret.secretBytes() ?: return null
+
+        val code = runCatching {
+            TotpGenerator.code(
+                secret = seed,
+                timeMillis = nowMillis,
+                period = secret.periodSeconds,
+                digits = secret.digits,
+                algorithm = secret.algorithm
+            )
+        }.getOrNull() ?: return null
+
+        val builder = DatasetCompat.datasetBuilder(
+            AutofillPresentations.row(
+                context = context,
+                title = entry.label,
+                // The code itself is never in the presentation. That row is drawn on top of another
+                // app's window, and a one-time code sitting there is readable by anyone looking at
+                // the screen - and by the app underneath if it can capture it.
+                subtitle = context.getString(R.string.autofill_code_subtitle),
+                kind = entry.kind
+            )
+        )
+        builder.putValue(otpId, AutofillValue.forText(code))
+        return builder.build()
+    }
+
     /** Called when the user picks from the picker - never inferred. */
     suspend fun rememberLink(spec: FillSpec, entryId: String) {
         repository.rememberAutofillLink(spec.target.key, entryId, spec.target.signature)
@@ -203,6 +277,18 @@ internal class AutofillResponder(
             // strings, so they are matched here rather than renamed.
             FieldRole.CARD_EXPIRY -> extras["expiry"]
             FieldRole.CARD_SECURITY_CODE -> extras["cvv"]
+
+            /*
+             * Never filled here, and returning null is how that rule is enforced rather than
+             * remembered.
+             *
+             * A login form and its one-time-code box can appear in the same structure. Filling both
+             * from one tap would mean a single successful phishing page captures a complete, usable
+             * session - password and second factor together - which is exactly the outcome 2FA exists
+             * to prevent. Codes come from [codeDatasetFor], which the user reaches as a separate,
+             * separately authenticated action.
+             */
+            FieldRole.OTP -> null
         }
     }
 
@@ -212,15 +298,25 @@ internal class AutofillResponder(
         subtitle: String,
         kind: ItemKind,
         mode: Int,
-        entryId: String?
+        entryId: String?,
+        codeOnly: Boolean = false
     ): Dataset {
         val builder = DatasetCompat.datasetBuilder(
             AutofillPresentations.row(context, title, subtitle, kind)
         )
         // Null values throughout: the dataset authenticates, so the framework wants the ids it will
         // fill and nothing more until that authentication returns.
+        /*
+         * Every field is declared, including the code box on a credential row.
+         *
+         * The separation between a password and a code is enforced on the *values* - `valueFor` returns
+         * null for OTP, and `codeDatasetFor` fills nothing else - not on which ids a placeholder
+         * mentions. Filtering here as well would look tidier and would break: on a screen whose only
+         * fillable field is the code box, the credential placeholder would declare nothing at all, and
+         * `Dataset.Builder.build()` rejects a dataset with no fields.
+         */
         spec.fields.forEach { builder.putValue(it.autofillId, null) }
-        builder.setAuthentication(authIntent(mode, spec, entryId).intentSender)
+        builder.setAuthentication(authIntent(mode, spec, entryId, codeOnly).intentSender)
         return builder.build()
     }
 
@@ -250,9 +346,15 @@ internal class AutofillResponder(
             .build()
     }
 
-    private fun authIntent(mode: Int, spec: FillSpec, entryId: String? = null): PendingIntent {
+    private fun authIntent(
+        mode: Int,
+        spec: FillSpec,
+        entryId: String? = null,
+        codeOnly: Boolean = false
+    ): PendingIntent {
         val intent = Intent(context, AUTH_ACTIVITY)
             .putExtra(AutofillIntents.EXTRA_MODE, mode)
+            .putExtra(AutofillIntents.EXTRA_CODE_ONLY, codeOnly)
             .also { AutofillIntents.putSpec(it, spec) }
         entryId?.let { intent.putExtra(AutofillIntents.EXTRA_ENTRY_ID, it) }
 

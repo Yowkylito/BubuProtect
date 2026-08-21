@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Window identity, not window content.
+
+    canRetrieveWindowContent is false on purpose, and it is the most important line in this file. It
+    is the difference between a service that can be handed the text of every screen the user looks at
+    - which is what the device check warns about, correctly - and one that can only ask "what windows
+    exist and who owns them". The second is all that overlay attribution needs.
+
+    FLAG_RETRIEVE_INTERACTIVE_WINDOWS is what makes getWindows() return anything at all. Without it
+    the service can see events but not enumerate the window stack, and the window stack is the only
+    place the owning package of an overlay is recorded.
+
+    No packageNames filter, because the whole point is to catch an app nobody has listed yet.
+
+    notificationTimeout is 100ms rather than 0: ad overlays arrive in bursts of several window events,
+    and coalescing them costs one tenth of a second of latency on a screen the user is not looking at
+    yet while removing most of the duplicate work.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/shield_accessibility_description"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.personal.bubuprotect.MainActivity" />

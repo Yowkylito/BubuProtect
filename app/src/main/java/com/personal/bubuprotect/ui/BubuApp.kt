@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,16 +48,21 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.personal.bubuprotect.session.VaultSession
 import com.personal.bubuprotect.core.autofill.AutofillSettings
+import com.personal.bubuprotect.core.crypto.VaultKeyManager
+import com.personal.bubuprotect.data.local.UserPreferences
 import com.personal.bubuprotect.core.backup.VaultBackupEnvelope
 import com.personal.bubuprotect.core.backup.VaultBackupService
 import com.personal.bubuprotect.ui.motion.BubuMotion
 import com.personal.bubuprotect.ui.components.BreachAlertDialog
 import com.personal.bubuprotect.ui.components.BackupPassphraseDialog
 import com.personal.bubuprotect.ui.screens.DeviceCheckRoute
+import com.personal.bubuprotect.ui.screens.ShieldRoute
 import com.personal.bubuprotect.ui.screens.EntryDetailRoute
 import com.personal.bubuprotect.ui.screens.BreachReportScreen
 import com.personal.bubuprotect.ui.screens.EntryEditorRoute
+import com.personal.bubuprotect.ui.screens.ImportRoute
 import com.personal.bubuprotect.ui.screens.MainHeader
+import com.personal.bubuprotect.ui.screens.RecoveryKitRoute
 import com.personal.bubuprotect.ui.screens.MainScreen
 import com.personal.bubuprotect.ui.screens.SecurityGuideScreen
 import com.personal.bubuprotect.ui.screens.UnlockRoute
@@ -62,6 +70,7 @@ import com.personal.bubuprotect.ui.screens.VaultRoute
 import com.personal.bubuprotect.ui.screens.VaultSettingsSheet
 import com.personal.bubuprotect.ui.screens.rememberSessionViewModelStoreOwner
 import com.personal.bubuprotect.ui.vm.DeviceCheckViewModel
+import com.personal.bubuprotect.ui.vm.ShieldViewModel
 import com.personal.bubuprotect.ui.vm.EntryDetailViewModel
 import com.personal.bubuprotect.ui.vm.VaultViewModel
 import com.personal.bubuprotect.ui.vm.rememberBiometricGate
@@ -118,9 +127,11 @@ private fun UnlockedShell(
      * lock, which is correct: a device finding is only a statement about right now.
      */
     val deviceCheckViewModel: DeviceCheckViewModel = koinViewModel(viewModelStoreOwner = sessionOwner)
+    val shieldViewModel: ShieldViewModel = koinViewModel(viewModelStoreOwner = sessionOwner)
     val backupService: VaultBackupService = koinInject()
     val vaultState by vaultViewModel.state.collectAsStateWithLifecycle()
     val deviceState by deviceCheckViewModel.state.collectAsStateWithLifecycle()
+    val shieldState by shieldViewModel.state.collectAsStateWithLifecycle()
     val gate = rememberBiometricGate()
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -144,6 +155,51 @@ private fun UnlockedShell(
     }
     val autofillSupported = remember(autofillProbe) { AutofillSettings.isSupported(context) }
     val autofillEnabled = remember(autofillProbe) { AutofillSettings.isEnabled(context) }
+
+    /*
+     * Recovery-kit state, re-read every time the sheet opens.
+     *
+     * Keyed on `settingsOpen` rather than collected, because the only thing that changes it is the
+     * kit screen, and the user always comes back through this sheet. Reading once at composition
+     * would leave the row saying "Set up" after they had just set it up - which reads as the whole
+     * flow having failed.
+     */
+    /*
+     * The one-time recovery-kit offer, consumed on arrival.
+     *
+     * The flag is cleared before navigating, not after, so a process death mid-navigation cannot
+     * leave it set and send the user here again on every unlock. Missing the offer once is a far
+     * smaller failure than a screen that will not stop appearing.
+     */
+    val userPreferences: UserPreferences = koinInject()
+
+    // Read once into state so dismissing it does not depend on the preference being re-read.
+    var backupRefreshNeeded by rememberSaveable {
+        mutableStateOf(userPreferences.backupRefreshNeeded)
+    }
+
+    LaunchedEffect(Unit) {
+        if (userPreferences.recoveryKitPromptPending) {
+            userPreferences.recoveryKitPromptPending = false
+            navController.navigate(Routes.RecoveryKit)
+        }
+    }
+
+    val keyManager: VaultKeyManager = koinInject()
+    val hasRecoveryKit = remember(settingsOpen) { keyManager.hasRecoveryKit }
+    val recoveryKitCreatedAt = remember(settingsOpen) { keyManager.recoveryKitCreatedAt }
+
+    /*
+     * A kit that exists but cannot be opened.
+     *
+     * Normally impossible to see here, because a passphrase unlock re-arms the guard on the way in.
+     * It becomes true when there is nothing to re-arm *with* - the user removed their last
+     * fingerprint - and that is exactly the case worth saying out loud rather than leaving to be
+     * discovered later.
+     */
+    val recoveryKitSealed = remember(settingsOpen) {
+        keyManager.hasRecoveryKit && !keyManager.isRecoveryGuardIntact
+    }
 
     /*
      * Backup export, in two steps.
@@ -193,6 +249,7 @@ private fun UnlockedShell(
             navController = navController,
             vaultViewModel = vaultViewModel,
             deviceCheckViewModel = deviceCheckViewModel,
+            shieldViewModel = shieldViewModel,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
@@ -211,6 +268,17 @@ private fun UnlockedShell(
             },
             strictRevealEnabled = vaultState.strictRevealEnabled,
             onToggleStrictReveal = vaultViewModel::setStrictReveal,
+            hasRecoveryKit = hasRecoveryKit,
+            recoveryKitSealed = recoveryKitSealed,
+            recoveryKitCreatedAt = recoveryKitCreatedAt,
+            onOpenRecoveryKit = {
+                settingsOpen = false
+                navController.navigate(Routes.RecoveryKit)
+            },
+            onOpenImport = {
+                settingsOpen = false
+                navController.navigate(Routes.Import)
+            },
             autofillSupported = autofillSupported,
             autofillEnabled = autofillEnabled,
             onOpenAutofillSettings = {
@@ -239,6 +307,11 @@ private fun UnlockedShell(
                 settingsOpen = false
                 navController.navigate(Routes.DeviceCheck)
             },
+            adCulpritCount = shieldState.culprits.size,
+            onOpenShield = {
+                settingsOpen = false
+                navController.navigate(Routes.Shield)
+            },
             onExportBackup = {
                 settingsOpen = false
                 exportPicker.launch(backupService.suggestedFileName(todayStamp()))
@@ -261,6 +334,44 @@ private fun UnlockedShell(
      * The settings sheet is the one exception: a modal bottom sheet and an alert dialog stacked on
      * top of each other is a scrim over a scrim, and the sheet has its own visible breach row.
      */
+    /*
+     * Shown after a recovery, and only then.
+     *
+     * Deliberately a dialog rather than a quiet row in settings. The user cannot see that their
+     * backup files stopped working, there is no error to run into, and the moment they find out
+     * unaided is the moment they needed one. This is the only interruption in the app that exists to
+     * report something that already silently happened.
+     */
+    if (backupRefreshNeeded) {
+        AlertDialog(
+            onDismissRequest = {
+                userPreferences.backupRefreshNeeded = false
+                backupRefreshNeeded = false
+            },
+            title = { Text("Save a fresh backup") },
+            text = {
+                Text(
+                    "Your passphrase has changed, so any backup file you saved before now still " +
+                        "needs the old one - which means you can no longer open it. Save a new " +
+                        "backup so you have a working copy again."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    userPreferences.backupRefreshNeeded = false
+                    backupRefreshNeeded = false
+                    exportPicker.launch(backupService.suggestedFileName(todayStamp()))
+                }) { Text("Save one now") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    userPreferences.backupRefreshNeeded = false
+                    backupRefreshNeeded = false
+                }) { Text("Later") }
+            }
+        )
+    }
+
     exportDestination?.let { destination ->
         BackupPassphraseDialog(
             title = "Save a backup",
@@ -315,6 +426,7 @@ private fun UnlockedShell(
 private fun VaultNavHost(
     vaultViewModel: VaultViewModel,
     deviceCheckViewModel: DeviceCheckViewModel,
+    shieldViewModel: ShieldViewModel,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
@@ -382,10 +494,33 @@ private fun VaultNavHost(
          * visit would start a new scan on every arrival and let the badge say "2" while the screen
          * showed three.
          */
+        composable<Routes.Import> {
+            val close = {
+                navController.popBackStack()
+                Unit
+            }
+            ImportRoute(onDone = close)
+        }
+
+        composable<Routes.RecoveryKit> {
+            val close = {
+                navController.popBackStack()
+                Unit
+            }
+            RecoveryKitRoute(onDone = close)
+        }
+
         composable<Routes.DeviceCheck> {
             DeviceCheckRoute(
                 onBack = { navController.popBackStack() },
                 viewModel = deviceCheckViewModel
+            )
+        }
+
+        composable<Routes.Shield> {
+            ShieldRoute(
+                onBack = { navController.popBackStack() },
+                viewModel = shieldViewModel
             )
         }
 

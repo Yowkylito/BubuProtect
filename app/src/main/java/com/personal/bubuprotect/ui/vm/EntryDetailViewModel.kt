@@ -2,6 +2,10 @@ package com.personal.bubuprotect.ui.vm
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.personal.bubuprotect.core.otp.OtpAuthUri
+import com.personal.bubuprotect.core.crypto.wipe
+import com.personal.bubuprotect.core.otp.OtpSecret
+import com.personal.bubuprotect.core.otp.TotpGenerator
 import com.personal.bubuprotect.core.security.PwnedPasswordChecker
 import com.personal.bubuprotect.core.security.PwnedPasswordResult
 import com.personal.bubuprotect.core.util.SecureClipboard
@@ -11,6 +15,7 @@ import com.personal.bubuprotect.domain.model.FieldSlot
 import com.personal.bubuprotect.domain.model.FieldSpec
 import com.personal.bubuprotect.domain.model.ItemKind
 import com.personal.bubuprotect.domain.model.VaultEntry
+import com.personal.bubuprotect.domain.model.totpSource
 import com.personal.bubuprotect.domain.repository.VaultRepository
 import com.personal.bubuprotect.domain.repository.VaultTamperedException
 import com.personal.bubuprotect.session.VaultSession
@@ -37,6 +42,24 @@ sealed interface EntryDetailContent {
 data class RevealedField(val slot: FieldSlot, val secondsRemaining: Int)
 
 /**
+ * A live one-time code, on screen because the user just authenticated for it.
+ *
+ * Present only while it is being read. Unlike a revealed password, the value here is worth almost
+ * nothing a minute later - which is why the *seed* is what the gate protects, and why the seed is
+ * never rendered at all.
+ */
+data class TotpDisplay(
+    val code: String,
+    /** Seconds until this code rolls over. Drives the ring. */
+    val secondsRemaining: Int,
+    val periodSeconds: Int
+) {
+    /** Grouped for reading aloud and for typing: `123 456`. */
+    val grouped: String
+        get() = if (code.length == 6) "${code.take(3)} ${code.takeLast(3)}" else code
+}
+
+/**
  * The *transient* half of the breach UI. The verdict itself lives on
  * [com.personal.bubuprotect.domain.model.VaultEntry.breach], loaded from the vault.
  *
@@ -58,10 +81,14 @@ data class EntryDetailUiState(
     val content: EntryDetailContent = EntryDetailContent.Loading,
     val revealed: RevealedField? = null,
     val passwordBreach: PasswordBreachState = PasswordBreachState.Idle,
+    val totp: TotpDisplay? = null,
     val isDeleted: Boolean = false,
     val notice: String? = null
 ) {
     val entry: VaultEntry? get() = (content as? EntryDetailContent.Ready)?.entry
+
+    /** Whether this entry carries a 2FA seed at all, without saying anything about its value. */
+    val hasTotp: Boolean get() = entry?.totpSource() != null
 }
 
 /**
@@ -96,6 +123,7 @@ class EntryDetailViewModel(
 
     private var revealTimer: Job? = null
     private var breachCheckJob: Job? = null
+    private var totpTimer: Job? = null
 
     init {
         load()
@@ -148,11 +176,16 @@ class EntryDetailViewModel(
                 if (!unlocked) {
                     revealTimer?.cancel()
                     breachCheckJob?.cancel()
+                    // Cancelled, not merely cleared. This one writes to the state every second, so
+                    // wiping the state without stopping the ticker would repopulate a live code
+                    // behind a locked vault on the very next tick.
+                    totpTimer?.cancel()
                     _state.update {
                         it.copy(
                             content = EntryDetailContent.Loading,
                             revealed = null,
-                            passwordBreach = PasswordBreachState.Idle
+                            passwordBreach = PasswordBreachState.Idle,
+                            totp = null
                         )
                     }
                 }
@@ -196,6 +229,108 @@ class EntryDetailViewModel(
                 notify("Copied. Bubu clears it in ${SecureClipboard.CLEAR_AFTER_SECONDS}s.")
             } else {
                 notify("This device has no clipboard available.")
+            }
+        }
+    }
+
+    /**
+     * Shows a live one-time code for [REVEAL_SECONDS], after a fresh authentication.
+     *
+     * ### Why this always prompts
+     *
+     * No `isAlreadyAuthorised` allowance is passed, so the sensor is touched every time even though
+     * the vault is already open. That is the whole point of holding a 2FA seed in a password manager
+     * at all: putting both factors behind one passphrase is what the arrangement gives up, and
+     * requiring a *separate* authentication for the code is what buys most of it back. Someone
+     * holding an unlocked phone has the password and still cannot produce the second factor.
+     *
+     * The seed itself is never shown, here or anywhere. It generates every future code, so it is
+     * worth strictly more than any code derived from it - the editor is the only screen that renders
+     * it, behind the same masking a password gets.
+     */
+    fun showTotpCode(gate: BiometricGate) {
+        viewModelScope.launch {
+            val source = _state.value.entry?.totpSource() ?: return@launch
+            val secret = OtpAuthUri.parse(source)
+            if (secret == null) {
+                // A seed that will not parse is worth saying out loud rather than silently doing
+                // nothing: it means the stored value is wrong and only the user can fix it.
+                notify("That 2FA secret could not be read. Check it in the editor.")
+                return@launch
+            }
+            if (!authorize(gate, "Show one-time code")) return@launch
+            startTotpCountdown(secret)
+        }
+    }
+
+    fun hideTotpCode() {
+        totpTimer?.cancel()
+        _state.update { it.copy(totp = null) }
+    }
+
+    /**
+     * Copies the code that is currently on screen.
+     *
+     * The already-authorised allowance applies, because the value is already visible - and strict
+     * mode withdraws it, exactly as it does for [copy]. A one-time code is also the least dangerous
+     * thing this app puts on the clipboard: it is worthless within a minute either way.
+     */
+    fun copyTotpCode(gate: BiometricGate) {
+        viewModelScope.launch {
+            val code = _state.value.totp?.code ?: return@launch
+            if (!authorize(gate, "Copy one-time code", isAlreadyAuthorised = true)) return@launch
+            if (clipboard.copySensitive("One-time code", code)) {
+                notify("Copied. Bubu clears it in ${SecureClipboard.CLEAR_AFTER_SECONDS}s.")
+            } else {
+                notify("This device has no clipboard available.")
+            }
+        }
+    }
+
+    /**
+     * Regenerates the code once a second so the ring and the value stay in step.
+     *
+     * The seed is decoded once for the window and wiped in `finally`, rather than decoded per tick or
+     * held for the life of the screen. Twenty HMACs over twenty bytes is nothing; a decoded seed
+     * sitting on the heap until the user navigates away is not.
+     */
+    private fun startTotpCountdown(secret: OtpSecret) {
+        totpTimer?.cancel()
+        totpTimer = viewModelScope.launch {
+            val seed = secret.secretBytes() ?: run {
+                notify("That 2FA secret could not be read. Check it in the editor.")
+                return@launch
+            }
+            try {
+                repeat(REVEAL_SECONDS) {
+                    val now = System.currentTimeMillis()
+                    val code = runCatching {
+                        TotpGenerator.code(
+                            secret = seed,
+                            timeMillis = now,
+                            period = secret.periodSeconds,
+                            digits = secret.digits,
+                            algorithm = secret.algorithm
+                        )
+                    }.getOrNull() ?: return@repeat
+
+                    _state.update {
+                        it.copy(
+                            totp = TotpDisplay(
+                                code = code,
+                                secondsRemaining = TotpGenerator.secondsRemaining(
+                                    now,
+                                    secret.periodSeconds
+                                ),
+                                periodSeconds = secret.periodSeconds
+                            )
+                        )
+                    }
+                    delay(1_000)
+                }
+            } finally {
+                seed.wipe()
+                _state.update { it.copy(totp = null) }
             }
         }
     }

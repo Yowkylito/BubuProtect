@@ -13,6 +13,21 @@ import com.personal.bubuprotect.domain.model.ItemKind
 enum class FieldRole {
     USERNAME,
     PASSWORD,
+
+    /**
+     * A one-time-code box.
+     *
+     * This used to be on the classifier's deny list, and the reason was sound: with no seed in the
+     * vault, the only thing that could be typed here was a password, and a password in an OTP box
+     * burns an attempt against a rate limit the user cannot see.
+     *
+     * Now that the vault can hold seeds it becomes a role - but a *conditional* one. A dataset for it
+     * is only ever offered when the matched entry actually has a seed, so the old protection still
+     * holds for every entry that does not. See [AutofillResponder] for the second rule that goes with
+     * it: a code is never filled in the same action as the password.
+     */
+    OTP,
+
     CARD_NUMBER,
     CARD_EXPIRY,
     CARD_SECURITY_CODE,
@@ -20,7 +35,7 @@ enum class FieldRole {
 
     val servedBy: ItemKind
         get() = when (this) {
-            USERNAME, PASSWORD -> ItemKind.LOGIN
+            USERNAME, PASSWORD, OTP -> ItemKind.LOGIN
             CARD_NUMBER, CARD_EXPIRY, CARD_SECURITY_CODE, CARD_HOLDER -> ItemKind.CARD
         }
 }

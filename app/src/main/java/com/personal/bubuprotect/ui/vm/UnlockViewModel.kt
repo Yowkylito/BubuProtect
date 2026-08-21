@@ -12,6 +12,7 @@ import com.personal.bubuprotect.core.backup.VaultBackupService
 import com.personal.bubuprotect.core.backup.WrongBackupPassphraseException
 import com.personal.bubuprotect.core.crypto.PassphraseKdf
 import com.personal.bubuprotect.core.crypto.VaultKeyManager
+import com.personal.bubuprotect.core.crypto.RecoveryGuardUnavailableException
 import com.personal.bubuprotect.core.crypto.WrongPassphraseException
 import com.personal.bubuprotect.core.crypto.wipe
 import com.personal.bubuprotect.core.security.BiometricAvailability
@@ -19,6 +20,7 @@ import com.personal.bubuprotect.core.security.BiometricAuthenticator
 import com.personal.bubuprotect.core.security.BiometricOutcome
 import com.personal.bubuprotect.core.security.IntegrityChecker
 import com.personal.bubuprotect.core.security.LockoutTracker
+import com.personal.bubuprotect.data.local.UserPreferences
 import com.personal.bubuprotect.session.VaultSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -40,6 +42,20 @@ data class UnlockUiState(
     val confirmation: String = "",
     val isBusy: Boolean = false,
     val biometricUnlockOffered: Boolean = false,
+    /**
+     * Whether a recovery kit exists for this vault.
+     *
+     * Drives whether the lock screen offers a way back at all. Read from keystore metadata rather
+     * than a preference, so it is true exactly when a code would actually work.
+     */
+    val hasRecoveryKit: Boolean = false,
+    /**
+     * Whether the user has passed the check that guards the recovery screen.
+     *
+     * Not persisted and not saved into instance state, so it dies with the process. A granted gate is
+     * a live authorisation, not a setting.
+     */
+    val recoveryAccessGranted: Boolean = false,
     val message: String? = null,
     val isMessageAnError: Boolean = true,
     /**
@@ -78,6 +94,7 @@ class UnlockViewModel(
     private val lockout: LockoutTracker,
     private val biometrics: BiometricAuthenticator,
     private val backupService: VaultBackupService,
+    private val preferences: UserPreferences,
     integrityChecker: IntegrityChecker,
     appContext: Context
 ) : ViewModel() {
@@ -106,6 +123,10 @@ class UnlockViewModel(
                 stage = if (keyManager.isEnrolled) UnlockStage.LOCKED else UnlockStage.SETUP,
                 biometricUnlockOffered = keyManager.isBiometricUnlockEnabled &&
                     biometrics.availability() == BiometricAvailability.AVAILABLE,
+                hasRecoveryKit = keyManager.hasRecoveryKit,
+                // Cleared whenever the lock screen is re-entered, so locking and coming back costs
+                // the check again rather than inheriting one from an earlier session.
+                recoveryAccessGranted = false,
                 warnings = warnings
             )
         }
@@ -134,6 +155,10 @@ class UnlockViewModel(
                 val keys = withContext(Dispatchers.Default) { keyManager.enroll(passphrase) }
                 session.open(keys)
                 lockout.recordSuccess()
+                // A brand-new vault has no way back if this passphrase is forgotten. Queued here so
+                // the offer lands while the vault is still empty, rather than after it holds
+                // everything the user owns.
+                preferences.recoveryKitPromptPending = true
                 clearInput()
                 offerBiometricEnrollment(gate)
             } catch (failure: Throwable) {
@@ -189,6 +214,10 @@ class UnlockViewModel(
 
                 val keys = withContext(Dispatchers.Default) { keyManager.enroll(chars) }
                 session.open(keys)
+                // A restored vault is as kitless as a new one, and its passphrase is one the
+                // user just typed off a backup rather than one they chose - so the offer matters
+                // more here, not less.
+                preferences.recoveryKitPromptPending = true
                 val restored = backupService.restoreInto(decoded.entries)
                 lockout.recordSuccess()
                 clearInput()
@@ -213,6 +242,82 @@ class UnlockViewModel(
         }
     }
 
+    /**
+     * Guards the way in to the recovery screen, and refuses outright when it cannot.
+     *
+     * ### The hole this closes
+     *
+     * A recovery kit saved as a file *on the phone it recovers* turns an unlocked stolen handset into
+     * full vault access - and worse, lets the thief set a new passphrase and lock the owner out.
+     * Without a kit, an unlocked phone gets a thief nothing, because the vault still wants a passphrase
+     * or a fingerprint. The kit is what changed that, so the kit needed a door.
+     *
+     * ### Why the check is a Keystore key, not `BiometricManager`
+     *
+     * "Is a fingerprint enrolled" is the wrong question, and answering it was this gate's original
+     * mistake. A stolen phone handed to someone who strips the owner's fingerprints and enrols their
+     * own passes that check and then satisfies the prompt with their own finger.
+     * [VaultKeyManager.beginRecoveryGuardCheck] instead uses a key the Android Keystore destroys the
+     * moment the enrolled set changes at all - so the question becomes "is this the same enrollment the
+     * kit was made under", which a technician cannot make true again.
+     *
+     * ### No fall-through, deliberately
+     *
+     * A sealed or missing guard refuses. This used to allow the action on a device with no usable
+     * biometric, to avoid turning a forgotten passphrase into permanent loss - and that was backwards:
+     * it handed an attacker the softer path simply by making the device look sensor-less, which is
+     * precisely what stripping biometrics achieves. Protecting what is in the vault beats preserving
+     * the recovery feature on a device that cannot protect it.
+     *
+     * ### Why the owner is not stranded
+     *
+     * Re-enrolling a fingerprint kills this guard *and* the biometric unlock wrapper, so the owner
+     * falls back to the master passphrase - which they still know, since recovery is for when they do
+     * not. That unlock silently re-arms the guard. The thief cannot reach that path without the
+     * passphrase, and with the passphrase they would have no use for this screen.
+     */
+    fun requestRecoveryAccess(gate: BiometricGate) {
+        if (_state.value.isBusy || _state.value.isLockedOut) return
+        viewModelScope.launch {
+            _state.update { it.copy(isBusy = true, message = null) }
+            try {
+                val cipher = keyManager.beginRecoveryGuardCheck()
+                when (
+                    val outcome = gate.authenticate(
+                        "Use your recovery kit",
+                        "Confirm it is you",
+                        BiometricPrompt.CryptoObject(cipher)
+                    )
+                ) {
+                    is BiometricOutcome.Success -> {
+                        val authorised = outcome.cipher ?: error("Prompt returned no cipher")
+                        // The Keystore operation, not the callback, is the proof. See
+                        // VaultKeyManager.finishRecoveryGuardCheck.
+                        if (keyManager.finishRecoveryGuardCheck(authorised)) {
+                            _state.update { it.copy(recoveryAccessGranted = true, message = null) }
+                        } else {
+                            fail(RECOVERY_SEALED)
+                        }
+                    }
+
+                    // Someone who just cancelled a prompt does not need to be told they cancelled it.
+                    BiometricOutcome.Cancelled -> Unit
+
+                    is BiometricOutcome.Error -> fail(outcome.message)
+                }
+            } catch (sealed: RecoveryGuardUnavailableException) {
+                fail(RECOVERY_SEALED)
+            } catch (failure: Throwable) {
+                Timber.tag(TAG).e(failure, "Recovery guard check failed")
+                fail("Bubu could not open recovery just now. Please try again.")
+            } finally {
+                _state.update { it.copy(isBusy = false) }
+            }
+        }
+    }
+
+    fun clearRecoveryAccess() = _state.update { it.copy(recoveryAccessGranted = false) }
+
     fun unlockWithPassphrase() {
         val current = _state.value
         if (!current.canSubmit) return
@@ -225,6 +330,10 @@ class UnlockViewModel(
                 val keys = withContext(Dispatchers.Default) { keyManager.unlockWithPassphrase(passphrase) }
                 session.open(keys)
                 lockout.recordSuccess()
+                // Silently repairs a guard that a fingerprint change invalidated. Only reachable from
+                // inside the vault, which is what stops an attacker using it - see
+                // VaultKeyManager.rearmRecoveryGuard.
+                withContext(Dispatchers.Default) { keyManager.rearmRecoveryGuard() }
                 clearInput()
             } catch (wrong: WrongPassphraseException) {
                 val penalty = lockout.recordFailure()
@@ -265,6 +374,10 @@ class UnlockViewModel(
                         }
                         session.open(keys)
                         lockout.recordSuccess()
+                        // Idempotent, and normally a no-op here: a fingerprint change would have
+                        // invalidated the unlock wrapper too, so this path would not have succeeded.
+                        // It covers a guard lost for any other reason.
+                        withContext(Dispatchers.Default) { keyManager.rearmRecoveryGuard() }
                         clearInput()
                     }
 
@@ -342,5 +455,16 @@ class UnlockViewModel(
 
     private companion object {
         const val TAG = "UnlockViewModel"
+
+        /**
+         * Says what happened and what fixes it, and helps an attacker with none of it.
+         *
+         * The owner needs to know their kit is not lost and that one passphrase unlock restores it.
+         * Someone holding a stolen phone learns only that they need the passphrase - which they
+         * already needed, and which is the whole reason this screen was worth guarding.
+         */
+        const val RECOVERY_SEALED =
+            "Recovery is sealed because this phone's fingerprint or face setup changed. Unlock " +
+                "with your master passphrase once to switch it back on."
     }
 }

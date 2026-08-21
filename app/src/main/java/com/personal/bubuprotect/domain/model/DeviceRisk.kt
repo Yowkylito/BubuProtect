@@ -10,10 +10,12 @@ package com.personal.bubuprotect.domain.model
  *
  *  - `getRunningAppProcesses()` has returned only the caller's own process since Android 5, so there
  *    is no process list to walk.
- *  - `getInstalledPackages()` needs `QUERY_ALL_PACKAGES`, a Play-policy-restricted permission a
- *    password manager has no business holding - and asking for it would mean this app could
- *    enumerate everything the user has installed, which is close to the capability it is warning
- *    about elsewhere.
+ *  - Nothing here enumerates installed packages. The app does now hold `QUERY_ALL_PACKAGES`, for
+ *    [com.personal.bubuprotect.core.shield.AppRiskScanner] - see the argument for it in the manifest -
+ *    but this scanner deliberately does not use it. Its probes read capability *grants*, which Android
+ *    hands over without any declaration, and widening them to walk the full app list would blur the
+ *    line between the two features: this one audits what could reach the vault and names nothing, the
+ *    shield accuses specific apps and has to show its evidence.
  *  - Nothing can read another app's memory, files, or traffic without root.
  *
  * So the question is turned around. Instead of "which app here is malware" - unanswerable - it asks
